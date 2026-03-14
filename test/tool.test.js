@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { createAkshareTool } from "../src/tool.js";
 
+const PYTHON_BIN = os.platform() === "win32" ? "py" : "python3";
+
 function createTempDbPath(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akshare-tool-"));
   return path.join(dir, `${name}.sqlite`);
@@ -13,7 +15,7 @@ function createTempDbPath(name) {
 
 function createTestTool(options = {}) {
   return createAkshareTool({
-    pythonBin: "py",
+    pythonBin: PYTHON_BIN,
     projectRoot: process.cwd(),
     dbPath: createTempDbPath("tool"),
     env: {

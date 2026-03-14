@@ -194,4 +194,6 @@ const result = await registry.invoke("macro_china_all");
 - Node 侧路径使用 `path.join()` 构建。
 - Python 侧路径使用 `pathlib.Path` 构建。
 - SQLite 使用标准库 `sqlite3`，无额外平台依赖。
+- Node 客户端运行时会自动选择 Windows 下的 `py` 或 Linux 下的 `python3`。
+- 测试也会按平台自动选择 Python 启动命令，不依赖 Windows 专用别名。
 - Linux 部署时只需要确保 `python3`、`pip` 和网络访问 `akshare` 所需数据源即可。

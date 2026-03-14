@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { INTERFACE_GROUPS, createClient, createTypedClient } from "../src/index.js";
 
+const PYTHON_BIN = os.platform() === "win32" ? "py" : "python3";
+
 function createTempDbPath(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akshare-node-"));
   return path.join(dir, `${name}.sqlite`);
@@ -13,7 +15,7 @@ function createTempDbPath(name) {
 
 function createTestClient(options = {}) {
   return createClient({
-    pythonBin: "py",
+    pythonBin: PYTHON_BIN,
     projectRoot: process.cwd(),
     env: {
       AKSHARE_NODE_TEST_MODE: "1",
@@ -35,7 +37,7 @@ test("public client exposes documented functions", async () => {
 
 test("typed client exposes grouped methods for injection", async () => {
   const typedClient = createTypedClient({
-    pythonBin: "py",
+    pythonBin: PYTHON_BIN,
     projectRoot: process.cwd(),
     dbPath: createTempDbPath("typed"),
     env: {

@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { createAgentToolRegistry } from "../src/agent-tools.js";
 
+const PYTHON_BIN = os.platform() === "win32" ? "py" : "python3";
+
 function createTempDbPath(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akshare-agent-tools-"));
   return path.join(dir, `${name}.sqlite`);
@@ -13,7 +15,7 @@ function createTempDbPath(name) {
 
 function createRegistry(options = {}) {
   return createAgentToolRegistry({
-    pythonBin: "py",
+    pythonBin: PYTHON_BIN,
     projectRoot: process.cwd(),
     dbPath: createTempDbPath("registry"),
     env: {
@@ -41,4 +43,3 @@ test("agent registry rejects unsupported tools", async () => {
   const registry = createRegistry();
   await assert.rejects(() => registry.invoke("missing_tool", {}), /Unsupported tool/);
 });
-
