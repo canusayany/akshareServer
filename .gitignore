@@ -1,6 +1,9 @@
 node_modules/
 data/
+python/data/
 __pycache__/
 .pytest_cache/
 *.pyc
+*.sqlite
+outputs/
 

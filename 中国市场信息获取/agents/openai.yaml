@@ -1,0 +1,4 @@
+interface:
+  display_name: "本地行情数据 API"
+  short_description: "调用本地 AKShare HTTP 服务"
+  default_prompt: "使用本地 AKShare HTTP 服务 `127.0.0.1:8888` 查询股票、期货、基金、宏观经济、商品、债券、行业与板块数据。优先先做健康检查，再查看可用接口，再按接口名调用。结果较大时使用脚本自动落盘。"
