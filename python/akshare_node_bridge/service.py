@@ -23,6 +23,7 @@ SUPPORTED_INTERFACES = {
     "fund_meta",
     "fund_etf_market",
     "fund_open_info",
+    "macro_china_all",
     "commodity_basis",
     "spot_sge",
     "bond_zh_hs_market",
@@ -95,4 +96,3 @@ class BridgeService:
             "sampling_step": limited["sampling_step"],
             "rows": limited["rows"],
         }
-

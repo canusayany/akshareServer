@@ -30,6 +30,19 @@ import path from "node:path";
  */
 
 /**
+ * Interface names grouped by business type for dependency injection.
+ */
+export const INTERFACE_GROUPS = {
+  stock: ["stock_zh_a_spot", "stock_zh_a_hist", "stock_intraday_em", "stock_bid_ask_em"],
+  futures: ["futures_zh_spot", "futures_zh_hist", "match_main_contract", "futures_basis"],
+  fund: ["fund_meta", "fund_etf_market", "fund_open_info"],
+  macro: ["macro_china_all"],
+  commodity: ["commodity_basis", "spot_sge"],
+  bond: ["bond_zh_hs_market", "bond_zh_hs_cov_market", "bond_cb_meta"],
+  board: ["stock_board_industry", "stock_board_concept"],
+};
+
+/**
  * Create a client that exposes AKShare-like functions for Node callers.
  *
  * @param {ClientOptions} [options] Client configuration.
@@ -37,6 +50,16 @@ import path from "node:path";
  */
 export function createClient(options = {}) {
   return new AkshareNodeClient(options);
+}
+
+/**
+ * Create grouped method sets for category-based injection.
+ *
+ * @param {ClientOptions} [options] Client configuration.
+ * @returns {ReturnType<AkshareNodeClient["byType"]>} Grouped client methods.
+ */
+export function createTypedClient(options = {}) {
+  return createClient(options).byType();
 }
 
 /**
@@ -53,6 +76,28 @@ export class AkshareNodeClient {
       options.dbPath || process.env.AKSHARE_NODE_DB_PATH || path.join(this.projectRoot, "data", "akshare_cache.sqlite");
     this.maxBytes = options.maxBytes || Number(process.env.AKSHARE_NODE_MAX_BYTES || 2000);
     this.env = { ...process.env, ...options.env };
+  }
+
+  /**
+   * Return grouped method sets keyed by business type.
+   *
+   * @returns {{
+   *   client: AkshareNodeClient,
+   *   stock: Record<string, Function>,
+   *   futures: Record<string, Function>,
+   *   fund: Record<string, Function>,
+   *   macro: Record<string, Function>,
+   *   commodity: Record<string, Function>,
+   *   bond: Record<string, Function>,
+   *   board: Record<string, Function>
+   * }} Grouped method facade.
+   */
+  byType() {
+    const groups = { client: this };
+    for (const [groupName, methods] of Object.entries(INTERFACE_GROUPS)) {
+      groups[groupName] = Object.fromEntries(methods.map((methodName) => [methodName, this[methodName].bind(this)]));
+    }
+    return groups;
   }
 
   /**
@@ -208,6 +253,14 @@ export class AkshareNodeClient {
    * @returns {Promise<BridgeResponse>} Open fund rows.
    */
   async fund_open_info(params = {}) { return this.invoke("fund_open_info", params); }
+
+  /**
+   * Get merged China macroeconomic datasets in a single call.
+   *
+   * @param {QueryParams} [params={}] Supports `datasets` for selecting a subset of macro datasets.
+   * @returns {Promise<BridgeResponse>} Flattened macro rows tagged by `dataset`.
+   */
+  async macro_china_all(params = {}) { return this.invoke("macro_china_all", params); }
 
   /**
    * Get commodity spot and basis data.

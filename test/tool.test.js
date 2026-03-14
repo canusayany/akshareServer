@@ -28,6 +28,7 @@ test("tool layer lists supported tools", async () => {
   const definitions = tool.listTools();
   assert.ok(definitions.length >= 10);
   assert.equal(definitions.some((item) => item.name === "stock_zh_a_hist"), true);
+  assert.equal(definitions.some((item) => item.name === "macro_china_all"), true);
   assert.equal(definitions.some((item) => item.name === "bond_cb_meta"), true);
 });
 
@@ -42,4 +43,3 @@ test("tool layer rejects unsupported tools", async () => {
   const tool = createTestTool();
   await assert.rejects(() => tool.call("not_exists", {}), /Unsupported tool/);
 });
-

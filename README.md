@@ -85,6 +85,7 @@ SQLite 负责保存归一化后的请求键和结果数据。
 - `fund_meta`
 - `fund_etf_market`
 - `fund_open_info`
+- `macro_china_all`
 - `commodity_basis`
 - `spot_sge`
 - `bond_zh_hs_market`
@@ -141,6 +142,43 @@ import { createAkshareTool } from "./src/tool.js";
 const tool = createAkshareTool();
 const result = await tool.call("stock_zh_a_spot", { symbol: "000001" });
 console.log(result.rows);
+```
+
+## 按类型注入方法
+
+```js
+import { createTypedClient } from "./src/index.js";
+
+const typed = createTypedClient();
+
+const stockMethods = typed.stock;
+const macroMethods = typed.macro;
+const bondMethods = typed.bond;
+
+const macroResult = await macroMethods.macro_china_all();
+console.log(macroResult.rows);
+```
+
+当前分组：
+
+- `stock`
+- `futures`
+- `fund`
+- `macro`
+- `commodity`
+- `bond`
+- `board`
+
+## Agent 工具注册表
+
+```js
+import { createAgentToolRegistry } from "./src/agent-tools.js";
+
+const registry = createAgentToolRegistry();
+
+const macroTools = registry.getGroup("macro");
+const bondTool = registry.getTool("bond_cb_meta");
+const result = await registry.invoke("macro_china_all");
 ```
 
 ## 环境变量

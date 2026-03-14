@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createClient } from "../src/index.js";
+import { INTERFACE_GROUPS, createClient, createTypedClient } from "../src/index.js";
 
 function createTempDbPath(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akshare-node-"));
@@ -28,8 +28,26 @@ test("public client exposes documented functions", async () => {
   assert.equal(typeof client.stock_zh_a_hist, "function");
   assert.equal(typeof client.futures_zh_hist, "function");
   assert.equal(typeof client.fund_etf_market, "function");
+  assert.equal(typeof client.macro_china_all, "function");
   assert.equal(typeof client.bond_zh_hs_market, "function");
   assert.equal(typeof client.stock_board_concept, "function");
+});
+
+test("typed client exposes grouped methods for injection", async () => {
+  const typedClient = createTypedClient({
+    pythonBin: "py",
+    projectRoot: process.cwd(),
+    dbPath: createTempDbPath("typed"),
+    env: {
+      AKSHARE_NODE_TEST_MODE: "1",
+    },
+  });
+
+  assert.deepEqual(INTERFACE_GROUPS.macro, ["macro_china_all"]);
+  assert.equal(typeof typedClient.stock.stock_zh_a_spot, "function");
+  assert.equal(typeof typedClient.futures.futures_zh_hist, "function");
+  assert.equal(typeof typedClient.macro.macro_china_all, "function");
+  assert.equal(typeof typedClient.bond.bond_cb_meta, "function");
 });
 
 test("bridge returns standardized response shape", async () => {
@@ -91,4 +109,14 @@ test("payload limit reduces rows evenly without truncating only tail", async () 
       "2024-01-02 15:00:00",
     ],
   );
+});
+
+test("macro endpoint returns merged dataset rows", async () => {
+  const client = createTestClient({ dbPath: createTempDbPath("macro"), maxBytes: 2000 });
+  const result = await client.macro_china_all();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.interface, "macro_china_all");
+  assert.ok(result.rows.length >= 4);
+  assert.equal(result.rows.every((row) => typeof row.dataset === "string"), true);
 });

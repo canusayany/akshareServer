@@ -23,6 +23,7 @@ const TOOL_DEFINITIONS = [
   ["fund_meta", "Get fund metadata and purchase status", ["mode"]],
   ["fund_etf_market", "Get ETF market data", ["mode", "symbol", "period", "start_date", "end_date", "adjust"]],
   ["fund_open_info", "Get open fund NAV and indicator data", ["symbol", "indicator"]],
+  ["macro_china_all", "Get merged China macroeconomic datasets", ["datasets"]],
   ["commodity_basis", "Get commodity spot and basis data", ["mode", "symbol", "date"]],
   ["spot_sge", "Get Shanghai Gold Exchange data", ["mode", "symbol"]],
   ["bond_zh_hs_market", "Get Shanghai and Shenzhen bond market data", ["mode", "symbol"]],

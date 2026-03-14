@@ -3,12 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+import math
 from typing import Any
 
 
+MACRO_DATASETS = (
+    "macro_china_gdp",
+    "macro_china_cpi",
+    "macro_china_ppi",
+    "macro_china_pmi",
+    "macro_china_lpr",
+    "macro_china_money_supply",
+    "macro_china_new_financial_credit",
+    "macro_china_fx_gold",
+)
+
+
 def _make_json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if isinstance(value, datetime):
         return value.isoformat(sep=" ")
     if isinstance(value, date):
@@ -37,6 +52,10 @@ def _normalize_result(result: Any) -> list[dict[str, Any]]:
         if isinstance(records, list):
             return [_make_json_safe(dict(item)) for item in records]
     return [{"value": _make_json_safe(result)}]
+
+
+def _tag_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"dataset": dataset, **row} for row in rows]
 
 
 @dataclass
@@ -75,6 +94,17 @@ class StubBackend:
                 {"symbol": "RB0", "date": "2024-01-02", "close": 3800},
                 {"symbol": "RB0", "date": "2024-01-03", "close": 3810},
                 {"symbol": "RB0", "date": "2024-01-04", "close": 3820},
+            ]
+        if interface_name == "macro_china_all":
+            return [
+                {"dataset": "macro_china_gdp", "date": "2024-03", "value": 5.3},
+                {"dataset": "macro_china_cpi", "date": "2024-03", "value": 0.1},
+                {"dataset": "macro_china_ppi", "date": "2024-03", "value": -2.8},
+                {"dataset": "macro_china_pmi", "date": "2024-03", "value": 50.8},
+                {"dataset": "macro_china_lpr", "date": "2024-03", "value": 3.45},
+                {"dataset": "macro_china_money_supply", "date": "2024-03", "value": 8.3},
+                {"dataset": "macro_china_new_financial_credit", "date": "2024-03", "value": 30900},
+                {"dataset": "macro_china_fx_gold", "date": "2024-03", "value": 32457},
             ]
         return [{"interface": interface_name, "params": params}]
 
@@ -169,6 +199,16 @@ class AkshareBackend:
             fund=params["symbol"],
             indicator=params.get("indicator", "单位净值走势"),
         )
+
+    def _fetch_macro_china_all(self, params: dict[str, Any]) -> Any:
+        dataset_names = params.get("datasets") or MACRO_DATASETS
+        rows: list[dict[str, Any]] = []
+        for dataset_name in dataset_names:
+            fetcher = getattr(self.ak, dataset_name, None)
+            if fetcher is None:
+                continue
+            rows.extend(_tag_rows(dataset_name, _normalize_result(fetcher())))
+        return rows
 
     def _fetch_commodity_basis(self, params: dict[str, Any]) -> Any:
         mode = params.get("mode", "spot_price_qh")
