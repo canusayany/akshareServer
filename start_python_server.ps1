@@ -1,3 +1,15 @@
+[CmdletBinding()]
+param(
+    # Disable SSL certificate verification for all outbound HTTPS requests.
+    # Use this when a corporate TLS-inspection proxy causes "certificate verify
+    # failed" errors from AKShare.  Sets AKSHARE_NO_SSL_VERIFY=1.
+    [switch]$Nossl,
+
+    # Skip pip install steps.  Use this for fast restarts when dependencies
+    # are already installed in the virtual environment.
+    [switch]$SkipInstall
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -48,20 +60,30 @@ if (-not (Test-Path $venvPython)) {
     }
 }
 
-& $venvPython -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to upgrade pip in $venvDir"
-}
+if (-not $SkipInstall) {
+    & $venvPython -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to upgrade pip in $venvDir"
+    }
 
-& $venvPython -m pip install -r $requirements
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to install requirements from $requirements"
+    & $venvPython -m pip install -r $requirements
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install requirements from $requirements"
+    }
+} else {
+    Write-Host "Skipping pip install (-SkipInstall)" -ForegroundColor Yellow
 }
 
 $env:PYTHONPATH = $pythonPath
 $env:AKSHARE_NODE_DB_PATH = $dbPath
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
+
+if ($Nossl) {
+    $env:AKSHARE_NO_SSL_VERIFY = "1"
+    Write-Host "SSL verification DISABLED (AKSHARE_NO_SSL_VERIFY=1)" -ForegroundColor Yellow
+    Write-Host "Only use this behind a trusted corporate TLS-inspection proxy." -ForegroundColor Yellow
+}
 
 Write-Host "Starting AKShare local server on http://127.0.0.1:8888" -ForegroundColor Green
 Write-Host "Database: $dbPath"

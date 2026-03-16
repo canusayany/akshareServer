@@ -4,7 +4,74 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 import math
+import os
 from typing import Any
+
+
+_SSL_PATCHED = False
+
+
+def _patch_ssl_if_needed(force: bool = False) -> None:
+    """Disable SSL certificate verification when AKSHARE_NO_SSL_VERIFY=1 or force=True.
+
+    In corporate / enterprise environments the outbound TLS proxy presents its
+    own certificate, which Python's built-in SSL context rejects with
+    "certificate verify failed".  Setting AKSHARE_NO_SSL_VERIFY=1 patches the
+    three HTTP stacks that AKShare uses (stdlib ssl, requests, httpx) to skip
+    verification globally for the life of the process.
+
+    The patch is applied at most once and is completely skipped when the env
+    var is absent or set to any value other than 1 / true / yes / on,
+    unless ``force=True`` is passed (e.g. from a per-request verify_ssl=False).
+    """
+    global _SSL_PATCHED
+    if _SSL_PATCHED:
+        return
+    if not force and os.environ.get("AKSHARE_NO_SSL_VERIFY", "").lower() not in {"1", "true", "yes", "on"}:
+        return
+
+    # 1. Patch stdlib ssl – covers urllib / urllib3 default context
+    import ssl  # noqa: PLC0415
+    ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
+
+    # 2. Patch requests (and its bundled urllib3)
+    try:
+        import requests  # noqa: PLC0415
+        import urllib3   # noqa: PLC0415
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        _orig_send = requests.Session.send
+
+        def _unverified_send(self, request, **kwargs):  # type: ignore[override]
+            kwargs["verify"] = False
+            return _orig_send(self, request, **kwargs)
+
+        requests.Session.send = _unverified_send  # type: ignore[method-assign]
+    except ImportError:
+        pass
+
+    # 3. Patch httpx if present (some AKShare versions use it)
+    try:
+        import httpx  # noqa: PLC0415
+
+        _orig_client_init = httpx.Client.__init__
+
+        def _unverified_client_init(self, *args, **kwargs):  # type: ignore[override]
+            kwargs["verify"] = False
+            _orig_client_init(self, *args, **kwargs)
+
+        httpx.Client.__init__ = _unverified_client_init  # type: ignore[method-assign]
+
+        _orig_async_init = httpx.AsyncClient.__init__
+
+        def _unverified_async_init(self, *args, **kwargs):  # type: ignore[override]
+            kwargs["verify"] = False
+            _orig_async_init(self, *args, **kwargs)
+
+        httpx.AsyncClient.__init__ = _unverified_async_init  # type: ignore[method-assign]
+    except ImportError:
+        pass
+
+    _SSL_PATCHED = True
 
 
 MACRO_DATASETS = (
@@ -17,6 +84,42 @@ MACRO_DATASETS = (
     "macro_china_new_financial_credit",
     "macro_china_fx_gold",
 )
+
+# LLM 可能传 "cpi,ppi,pm" 字符串，需要映射为完整 akshare 接口名
+_MACRO_SHORTHAND: dict[str, str] = {
+    "gdp": "macro_china_gdp",
+    "cpi": "macro_china_cpi",
+    "ppi": "macro_china_ppi",
+    "pmi": "macro_china_pmi",
+    "pm": "macro_china_pmi",  # pm 作为 pmi 的别名
+    "lpr": "macro_china_lpr",
+    "money_supply": "macro_china_money_supply",
+    "credit": "macro_china_new_financial_credit",
+    "fx_gold": "macro_china_fx_gold",
+}
+
+
+def _normalize_macro_datasets(value: Any) -> list[str]:
+    """将 datasets 参数统一为 macro_china_* 接口名列表。"""
+    if value is None:
+        return list(MACRO_DATASETS)
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+    elif isinstance(value, (list, tuple)):
+        parts = [str(p).strip() for p in value if p]
+    else:
+        return list(MACRO_DATASETS)
+    if not parts:
+        return list(MACRO_DATASETS)
+    result: list[str] = []
+    for p in parts:
+        if p.startswith("macro_china_"):
+            result.append(p)
+        else:
+            resolved = _MACRO_SHORTHAND.get(p.lower(), f"macro_china_{p.lower()}")
+            if resolved not in result:
+                result.append(resolved)
+    return result if result else list(MACRO_DATASETS)
 
 
 def _make_json_safe(value: Any) -> Any:
@@ -111,6 +214,7 @@ class StubBackend:
 
 class AkshareBackend:
     def __init__(self) -> None:
+        _patch_ssl_if_needed()
         import akshare as ak  # type: ignore
 
         self.ak = ak
@@ -200,8 +304,40 @@ class AkshareBackend:
             indicator=params.get("indicator", "单位净值走势"),
         )
 
+    _MACRO_SHORTHAND: dict[str, str] = {
+        "gdp": "macro_china_gdp",
+        "cpi": "macro_china_cpi",
+        "ppi": "macro_china_ppi",
+        "pmi": "macro_china_pmi",
+        "pm": "macro_china_pmi",
+        "lpr": "macro_china_lpr",
+        "money_supply": "macro_china_money_supply",
+        "credit": "macro_china_new_financial_credit",
+        "fx_gold": "macro_china_fx_gold",
+    }
+
+    def _normalize_macro_datasets(self, raw: Any) -> tuple[str, ...]:
+        """Convert datasets param (string or list) to full akshare method names."""
+        if raw is None:
+            return MACRO_DATASETS
+        if isinstance(raw, str):
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+        elif isinstance(raw, (list, tuple)):
+            parts = [str(p).strip() for p in raw if p]
+        else:
+            return MACRO_DATASETS
+        if not parts:
+            return MACRO_DATASETS
+        result: list[str] = []
+        for p in parts:
+            if p.startswith("macro_china_"):
+                result.append(p)
+            else:
+                result.append(self._MACRO_SHORTHAND.get(p.lower(), f"macro_china_{p}"))
+        return tuple(result)
+
     def _fetch_macro_china_all(self, params: dict[str, Any]) -> Any:
-        dataset_names = params.get("datasets") or MACRO_DATASETS
+        dataset_names = self._normalize_macro_datasets(params.get("datasets"))
         rows: list[dict[str, Any]] = []
         for dataset_name in dataset_names:
             fetcher = getattr(self.ak, dataset_name, None)
@@ -210,18 +346,94 @@ class AkshareBackend:
             rows.extend(_tag_rows(dataset_name, _normalize_result(fetcher())))
         return rows
 
+    # Mapping from common futures/English codes to the Chinese commodity names
+    # that akshare's spot_price_qh() and futures_spot_sys() expect.
+    _COMMODITY_SYMBOL_MAP: dict[str, str] = {
+        # futures codes (upper / lower)
+        "CU": "铜", "cu": "铜",
+        "AL": "铝", "al": "铝",
+        "ZN": "锌", "zn": "锌",
+        "PB": "铅", "pb": "铅",
+        "NI": "镍", "ni": "镍",
+        "SN": "锡", "sn": "锡",
+        "AU": "黄金", "au": "黄金",
+        "AG": "白银", "ag": "白银",
+        "RU": "橡胶", "ru": "橡胶",
+        "RB": "螺纹钢", "rb": "螺纹钢",
+        "I": "铁矿石", "i": "铁矿石",
+        "J": "焦炭", "j": "焦炭",
+        "JM": "焦煤", "jm": "焦煤",
+        "HC": "热卷", "hc": "热卷",
+        "SS": "不锈钢", "ss": "不锈钢",
+        "SC": "原油", "sc": "原油",
+        "FU": "燃料油", "fu": "燃料油",
+        "PG": "LPG", "pg": "LPG",
+        "C": "玉米", "c": "玉米",
+        "CS": "淀粉", "cs": "淀粉",
+        "A": "大豆", "a": "大豆",
+        "M": "豆粕", "m": "豆粕",
+        "Y": "豆油", "y": "豆油",
+        "P": "棕榈油", "p": "棕榈油",
+        "RM": "菜粕", "rm": "菜粕",
+        "OI": "菜油", "oi": "菜油",
+        "SR": "白糖", "sr": "白糖",
+        "CF": "棉花", "cf": "棉花",
+        "TA": "PTA", "ta": "PTA",
+        "MA": "甲醇", "ma": "甲醇",
+        "L": "聚乙烯", "l": "聚乙烯",
+        "PP": "聚丙烯", "pp": "聚丙烯",
+        "V": "PVC", "v": "PVC",
+    }
+
+    def _resolve_commodity_symbol(self, raw: str | None, default: str) -> str:
+        """Convert a futures code to the Chinese name expected by spot_price_qh."""
+        if not raw:
+            return default
+        return self._COMMODITY_SYMBOL_MAP.get(raw.upper(), raw)
+
     def _fetch_commodity_basis(self, params: dict[str, Any]) -> Any:
-        mode = params.get("mode", "spot_price_qh")
+        mode = params.get("mode", "")
         if mode == "futures_spot_price":
             return self.ak.futures_spot_price(date=params.get("date"))
         if mode == "futures_spot_sys":
-            return self.ak.futures_spot_sys(symbol=params.get("symbol", "RU"))
-        return self.ak.spot_price_qh(symbol=params.get("symbol", "RU"))
+            symbol = self._resolve_commodity_symbol(params.get("symbol"), "RU")
+            # futures_spot_sys still uses the exchange code, keep original or best guess
+            # fall back to original code if not in map (exchange code != Chinese name here)
+            raw = params.get("symbol", "RU")
+            return self.ak.futures_spot_sys(symbol=raw)
+        # Default: use spot_price_qh which needs a Chinese commodity name.
+        # If no date is provided, get current spot price for specified commodity.
+        # When date is provided, use futures_spot_price to get full market snapshot.
+        date = params.get("date")
+        if date:
+            return self.ak.futures_spot_price(date=date)
+        chinese_name = self._resolve_commodity_symbol(params.get("symbol"), "铜")
+        return self.ak.spot_price_qh(symbol=chinese_name)
+
+    # Mapping from user-supplied aliases to the SGE symbol format.
+    _SGE_SYMBOL_MAP: dict[str, str] = {
+        "AU9999": "Au99.99", "au9999": "Au99.99",
+        "AU995": "Au99.5",  "au995": "Au99.5",
+        "AUTD": "Au(T+D)", "autd": "Au(T+D)",
+        "AU": "Au99.99",   "au": "Au99.99",
+        "AG9999": "Ag99.99", "ag9999": "Ag99.99",
+        "AGTD": "Ag(T+D)", "agtd": "Ag(T+D)",
+        "AG": "Ag99.99",   "ag": "Ag99.99",
+        "黄金": "Au99.99",
+        "白银": "Ag99.99",
+    }
+
+    def _resolve_sge_symbol(self, raw: str | None) -> str:
+        if not raw:
+            return "Au99.99"
+        return self._SGE_SYMBOL_MAP.get(raw, self._SGE_SYMBOL_MAP.get(raw.upper(), raw))
 
     def _fetch_spot_sge(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.spot_hist_sge(symbol=params["symbol"])
-        return self.ak.spot_quotations_sge(symbol=params.get("symbol", "Au99.99"))
+            symbol = self._resolve_sge_symbol(params.get("symbol"))
+            return self.ak.spot_hist_sge(symbol=symbol)
+        symbol = self._resolve_sge_symbol(params.get("symbol"))
+        return self.ak.spot_quotations_sge(symbol=symbol)
 
     def _fetch_bond_zh_hs_market(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":

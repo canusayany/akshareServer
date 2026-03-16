@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .backend import _patch_ssl_if_needed
 from .service import SUPPORTED_INTERFACES, BridgeService
 
 
@@ -50,6 +51,10 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             interface_name = payload["interface"]
             params = payload.get("params", {})
+            # If the caller requests no SSL verification, apply the patch now
+            # (idempotent – safe to call multiple times).
+            if not bool(payload.get("verify_ssl", True)):
+                _patch_ssl_if_needed(force=True)
             service = build_service(
                 max_bytes=payload.get("max_bytes"),
                 db_path=payload.get("db_path"),
@@ -90,6 +95,8 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    from .backend import _patch_ssl_if_needed  # noqa: PLC0415
+    _patch_ssl_if_needed()
     httpd = ThreadingHTTPServer((HOST, PORT), AkshareRequestHandler)
     try:
         httpd.serve_forever()

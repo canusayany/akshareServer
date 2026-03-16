@@ -1,31 +1,31 @@
 # 设计说明
 
-## 对外接口形态
+## 1. 对外接口形态
 
-对外保留接近 `akshare` 的命名风格，但对明显重复的接口做了一层合并：
+保留接近 `akshare` 的命名风格，对明显重复的接口做了合并。共 18 个接口：
 
-- `stock_zh_a_spot`
-- `stock_zh_a_hist`
-- `stock_intraday_em`
-- `stock_bid_ask_em`
-- `futures_zh_spot`
-- `futures_zh_hist`
-- `match_main_contract`
-- `futures_basis`
-- `fund_meta`
-- `fund_etf_market`
-- `fund_open_info`
-- `commodity_basis`
-- `spot_sge`
-- `bond_zh_hs_market`
-- `bond_zh_hs_cov_market`
-- `bond_cb_meta`
-- `stock_board_industry`
-- `stock_board_concept`
+- `stock_zh_a_spot` — A 股实时行情
+- `stock_zh_a_hist` — A 股历史行情
+- `stock_intraday_em` — A 股分时成交
+- `stock_bid_ask_em` — A 股盘口
+- `futures_zh_spot` — 期货实时行情
+- `futures_zh_hist` — 期货历史行情
+- `match_main_contract` — 主力合约映射
+- `futures_basis` — 期货基差结构
+- `fund_meta` — 基金元信息
+- `fund_etf_market` — ETF 行情
+- `fund_open_info` — 开放式基金净值/指数
+- `commodity_basis` — 商品/农产品基差
+- `spot_sge` — 上海黄金交易所现货
+- `bond_zh_hs_market` — 沪深债券行情
+- `bond_zh_hs_cov_market` — 沪深可转债行情
+- `bond_cb_meta` — 可转债元信息
+- `stock_board_industry` — 行业板块
+- `stock_board_concept` — 概念板块
 
-## 标准返回结构
+## 2. 标准返回结构
 
-每个 Node 接口都返回统一结构：
+每个 Node 接口返回统一结构：
 
 ```json
 {
@@ -42,112 +42,96 @@
 }
 ```
 
-字段含义：
+| 字段 | 含义 |
+|------|------|
+| `ok` | 调用是否成功 |
+| `interface` | 实际调用的接口名 |
+| `params` | 归一化后的参数 |
+| `cache_hit` | 是否命中 SQLite 缓存 |
+| `estimated_row_bytes` | 估算的单行 UTF-8 字节数 |
+| `max_rows` | 当前大小限制下允许的最大行数 |
+| `requested_rows` | 原始结果行数 |
+| `returned_rows` | 降频后的返回行数 |
+| `sampling_step` | 均匀采样步长，1 表示未降频 |
+| `rows` | 最终返回的数据行 |
 
-- `ok`：调用是否成功。
-- `interface`：实际调用的接口名。
-- `params`：归一化后的参数。
-- `cache_hit`：是否命中 SQLite 缓存。
-- `estimated_row_bytes`：估算的单行 UTF-8 字节数。
-- `max_rows`：在当前大小限制下允许的最大行数。
-- `requested_rows`：原始结果行数。
-- `returned_rows`：降频后的返回行数。
-- `sampling_step`：均匀采样步长，`1` 表示没有降频。
-- `rows`：最终返回的数据行。
+## 3. 缓存设计
 
-## 缓存设计
+缓存键由「接口名 + 归一化参数 + max_bytes」组成。流程：
 
-缓存键由以下信息组成：
+1. 查 SQLite 缓存
+2. 命中 → 读缓存数据，执行大小限制
+3. 未命中 → 调用 akshare，将归一化结果写入 SQLite，执行大小限制后返回
 
-- 接口名
-- 归一化参数
-- 当前 `max_bytes`
+## 4. 数据量限制
 
-执行流程：
+- 默认单次响应最大字节数 `2000`，限制对象为 `rows` 的紧凑 JSON 序列化
+- 单行估算：`estimated_row_size = ceil(total_payload_bytes / row_count)`，`max_rows = max(1, floor(max_bytes / estimated_row_size))`
+- 超出时进行**均匀降频**（非简单截断）：按交易日分组，对每天按固定步长采样，同步增加步长直至总大小低于上限，以保留时间覆盖范围
 
-1. 先查 SQLite。
-2. 如果缓存存在，直接读取缓存数据，再执行大小限制。
-3. 如果缓存不存在，则调用 `akshare`。
-4. 将原始归一化结果写入 SQLite。
-5. 对结果执行大小限制后返回。
+## 5. A 股日内时段规则
 
-## 数据量限制设计
+单只股票 + 单日 + 分钟级历史：仅保留有效交易节点（09:30、10:00、10:30、11:00、11:30、13:00、13:30、14:00、14:30、15:00），过滤午休与闭市后无效数据。
 
-### 固定上限
+## 6. Node 与 Python 职责
 
-- 默认单次响应最大字节数为 `2000`。
-- 限制对象是 `rows` 的紧凑 JSON 序列化结果。
+| 侧 | 职责 |
+|----|------|
+| Node | 暴露 JS API、参数/返回值注释、启动 Python 桥接、适配 agent tool |
+| Python | 调用 akshare、DataFrame→JSON、SQLite 缓存、大小估算/降频/时段过滤 |
 
-### 单行大小估算
+## 7. 测试策略
 
-流程如下：
+- **Node 单元测试**：默认 StubBackend（`AKSHARE_NODE_TEST_MODE=1`），不发真实请求
+- **Python 冒烟测试**：安装 akshare 后访问真实接口验证桥接链路
 
-1. 将返回结果归一化为 JSON 安全对象。
-2. 使用紧凑 JSON 序列化整组数据。
-3. 用总字节数除以总行数，向上取整，得到单行估算大小。
+重点验证：接口可用性、SQLite 缓存命中、2KB 限制、均匀降频、agent tool 调用。
 
-公式：
+### 测试文件
 
-- `estimated_row_size = ceil(total_payload_bytes / row_count)`
-- `max_rows = max(1, floor(max_bytes / estimated_row_size))`
+| 文件 | 说明 |
+|------|------|
+| `communication.test.js` | 覆盖 18 个接口，StubBackend，subprocess 方式 |
+| `server.test.js` | 自动启动 HTTP 服务（TEST_MODE=1），测 /health、/tools、/invoke |
+| `http_api.test.js` | 对已运行 HTTP 服务全面测试，需先启动 `start_nossl.ps1` 或 `start_python_server.ps1` |
 
-### 均匀降频
+```powershell
+node --test                          # 全部测试
+node --test test/communication.test.js   # 仅通信测试
+```
 
-如果结果超出上限，不允许简单截断。
+## 8. SSL 错误与修复
 
-处理过程：
+### 根因
 
-1. 先按日期或时间字段识别所属交易日。
-2. 每天单独保留顺序。
-3. 对每天按固定步长采样，比如每隔 `2` 条取 `1` 条，再每隔 `3` 条取 `1` 条。
-4. 所有天同步增加步长，直到总大小低于上限。
+akshare 向东方财富、新浪等发 HTTPS 请求。企业内网 TLS 检查代理用自签名证书替换服务器证书，导致：
 
-这样能尽量保留时间覆盖范围。
+```
+requests.exceptions.SSLError: certificate verify failed: unable to get local issuer certificate
+```
 
-## A 股日内时段规则
+### 修复
 
-对“单只股票 + 单日 + 分钟级历史数据”请求，先过滤到有效交易节点：
+`backend.py` 的 `_patch_ssl_if_needed()` 在 `AKSHARE_NO_SSL_VERIFY=1` 时对 `ssl`、`requests`、`httpx` 打补丁，强制 `verify=False`。补丁幂等。
 
-- `09:30`
-- `10:00`
-- `10:30`
-- `11:00`
-- `11:30`
-- `13:00`
-- `13:30`
-- `14:00`
-- `14:30`
-- `15:00`
+```powershell
+.\start_python_server.ps1 -NoSslVerify
+# 或
+$env:AKSHARE_NO_SSL_VERIFY = "1"
+.\start_python_server.ps1
+```
 
-该规则用于避免把午休和闭市后的无效数据送回调用方。
+**注意**：关闭证书验证会降低 MITM 防御，仅在受信任企业代理环境下使用。
 
-## Node 与 Python 的职责划分
+## 9. 常见问题
 
-### Node 侧
+**Q: HTTP 请求是否必须使用 SSL？**
 
-- 暴露友好的 JS API
-- 为每个接口补充参数和返回值注释
-- 负责启动 Python 桥接进程
-- 适配 agent tool 的统一调用方式
+| 连接 | 协议 | 说明 |
+|------|------|------|
+| 客户端 → akshareServer | HTTP (127.0.0.1:8888) | 本地 HTTP，无需 SSL |
+| akshare → 外部数据源 | HTTPS | 企业 TLS 代理下证书失败时，可设 `AKSHARE_NO_SSL_VERIFY=1` 或 `verify_ssl: false` |
 
-### Python 侧
+**Q: 为什么 akshare 会“从网页抓取”？**
 
-- 调用真实 `akshare` 接口
-- 把 DataFrame 转成标准 JSON 行
-- 管理 SQLite 缓存
-- 实现大小估算、均匀降频、交易时段过滤
-
-## 测试策略
-
-当前测试分两层：
-
-- Node 单元测试：默认走 Python stub 后端，保证测试稳定。
-- Python/真实数据冒烟测试：安装 `akshare` 后，直接访问真实接口验证桥接链路。
-
-重点验证项：
-
-- Node 客户端函数是否完整可用
-- SQLite 是否命中缓存
-- 2KB 限制是否生效
-- 是否按均匀降频处理
-- agent tool 调用层是否可用
+akshare 非官方 API，而是对东方财富、新浪等数据源的封装，内部通过 HTTP/HTTPS 请求并解析 JSON/HTML。akshareServer 只调用 akshare 函数，不直接抓网页。

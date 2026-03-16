@@ -7,10 +7,12 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from .backend import _patch_ssl_if_needed
 from .service import BridgeService
 
 
 def main() -> int:
+    _patch_ssl_if_needed()
     payload = json.loads(sys.stdin.read() or "{}")
     interface_name = payload["interface"]
     params = payload.get("params", {})
