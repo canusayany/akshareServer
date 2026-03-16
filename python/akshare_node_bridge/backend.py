@@ -212,12 +212,43 @@ class StubBackend:
         return [{"interface": interface_name, "params": params}]
 
 
+def _filter_by_symbol(records: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
+    """按 代码/symbol 字段过滤记录"""
+    sym = str(symbol)
+    return [r for r in records if str(r.get("代码") or r.get("symbol", "")) == sym]
+
+
+def _get_tushare_pro():  # noqa: ANN202
+    """获取 Tushare Pro API 实例，需设置 TUSHARE_TOKEN 环境变量。未捐赠账号有调用限制。"""
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        import tushare as ts  # type: ignore
+        return ts.pro_api(token)
+    except ImportError:
+        return None
+
+
 class AkshareBackend:
     def __init__(self) -> None:
         _patch_ssl_if_needed()
         import akshare as ak  # type: ignore
 
         self.ak = ak
+
+    def _try_sources(self, fetchers: list[tuple[str, Any]], last_exc: Exception | None = None) -> Any:
+        """依次尝试多个数据源，第一个成功即返回"""
+        for name, fn in fetchers:
+            try:
+                result = fn() if callable(fn) else fn
+                if result is not None and (not hasattr(result, "empty") or not result.empty):
+                    return result
+            except Exception as e:
+                last_exc = e
+        if last_exc:
+            raise last_exc
+        return []
 
     def fetch(self, interface_name: str, params: dict[str, Any]) -> BackendResult:
         method = getattr(self, f"_fetch_{interface_name}", None)
@@ -226,12 +257,23 @@ class AkshareBackend:
         return BackendResult(rows=_normalize_result(method(params)))
 
     def _fetch_stock_zh_a_spot(self, params: dict[str, Any]) -> Any:
-        df = self.ak.stock_zh_a_spot_em()
         symbol = params.get("symbol")
-        if symbol is None:
-            return df
-        records = _normalize_result(df)
-        return [row for row in records if str(row.get("代码") or row.get("symbol")) == str(symbol)]
+
+        def _em() -> Any:
+            df = self.ak.stock_zh_a_spot_em()
+            if symbol is None:
+                return df
+            rec = _normalize_result(df)
+            return _filter_by_symbol(rec, symbol) or df
+
+        def _sina() -> Any:
+            df = self.ak.stock_zh_a_spot()
+            if symbol is None:
+                return df
+            rec = _normalize_result(df)
+            return _filter_by_symbol(rec, symbol) or df
+
+        return self._try_sources([("em", _em), ("sina", _sina)])
 
     def _fetch_stock_zh_a_hist(self, params: dict[str, Any]) -> Any:
         symbol = params["symbol"]
@@ -260,22 +302,225 @@ class AkshareBackend:
 
     def _fetch_futures_zh_spot(self, params: dict[str, Any]) -> Any:
         symbol = params.get("symbol")
+        market = params.get("market", "CF")
+        adjust = params.get("adjust", "0")
+        # symbol 为合约代码(含数字如 RB2505)用 futures_zh_spot；为品种名(如 PTA)用 futures_zh_realtime
         if symbol:
+            import re
+
+            if re.search(r"\d", str(symbol)):  # 含数字视为合约代码
+                return self.ak.futures_zh_spot(symbol=symbol, market=market, adjust=adjust)
             return self.ak.futures_zh_realtime(symbol=symbol)
-        return self.ak.futures_zh_spot(symbol=params.get("market", "FF"), adjust=params.get("adjust", "0"))
+        # 无 symbol 时从 match_main_contract 获取主力合约
+        try:
+            main = self.ak.match_main_contract(symbol="shfe")
+            if main and isinstance(main, str):
+                first = (main.split(",")[0] if "," in main else main).strip()
+                if first:
+                    return self.ak.futures_zh_spot(symbol=first, market="CF", adjust=adjust)
+        except Exception:
+            pass
+        return self.ak.futures_zh_spot(symbol="rb2505", market="CF", adjust=adjust)
+
+    # 期货交易所 -> Tushare ts_code 后缀
+    _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
+        "SHFE": "SHF", "DCE": "DCE", "CZCE": "CZCE",
+        "CFFEX": "CFFEX", "INE": "INE", "GFEX": "GFEX",
+    }
+
+    def _get_tushare_pro(self) -> Any:
+        """返回 tushare pro_api 实例，未设置 TUSHARE_TOKEN 时返回 None。"""
+        token = os.environ.get("TUSHARE_TOKEN") or os.environ.get("TUSHARE_API_KEY", "").strip()
+        if not token:
+            return None
+        try:
+            import tushare as ts  # type: ignore
+            return ts.pro_api(token)
+        except ImportError:
+            return None
+
+    # Tushare 交易所 ts_code 后缀
+    _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
+        "SHFE": "SHF", "DCE": "DCE", "CZCE": "CZCE",
+        "CFFEX": "CFFEX", "INE": "INE", "GFEX": "GFEX",
+    }
+
+    def _get_tushare_pro(self) -> Any:
+        """获取 Tushare Pro API，需设置 TUSHARE_TOKEN 环境变量。未捐赠账号有频次限制。"""
+        token = os.environ.get("TUSHARE_TOKEN", "").strip()
+        if not token:
+            return None
+        try:
+            import tushare as ts  # type: ignore
+            return ts.pro_api(token)
+        except ImportError:
+            return None
+
+    # 期货合约代码 -> 交易所 (get_futures_daily 用)
+    _FUTURES_SYMBOL_TO_MARKET: dict[str, str] = {
+        "IF": "CFFEX", "IC": "CFFEX", "IH": "CFFEX", "IM": "CFFEX",
+        "RB": "SHFE", "AU": "SHFE", "AG": "SHFE", "CU": "SHFE", "AL": "SHFE",
+        "ZN": "SHFE", "PB": "SHFE", "NI": "SHFE", "SN": "SHFE", "RU": "SHFE",
+        "HC": "SHFE", "SS": "SHFE", "SC": "INE", "FU": "SHFE", "BU": "SHFE",
+        "PG": "DCE", "I": "DCE", "J": "DCE", "JM": "DCE", "C": "DCE",
+        "CS": "DCE", "A": "DCE", "M": "DCE", "Y": "DCE", "P": "DCE",
+        "L": "DCE", "V": "DCE", "PP": "DCE", "EG": "DCE", "EB": "DCE",
+        "SR": "CZCE", "CF": "CZCE", "TA": "CZCE", "MA": "CZCE", "RM": "CZCE",
+        "OI": "CZCE", "FG": "CZCE", "SF": "CZCE", "SM": "CZCE", "AP": "CZCE",
+        "CJ": "CZCE", "UR": "CZCE", "SA": "CZCE", "PF": "CZCE", "PK": "CZCE",
+        "SI": "GFEX", "LC": "GFEX", "BR": "INE",
+    }
+
+    # Tushare 交易所 -> ts_code 后缀（如 RB2505.SHF）
+    _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
+        "SHFE": "SHF", "DCE": "DCE", "CZCE": "CZCE",
+        "CFFEX": "CFFEX", "INE": "INE", "GFEX": "GFEX",
+    }
+
+    def _get_tushare_pro(self) -> Any:
+        """Tushare Pro API。需设置 TUSHARE_TOKEN，未捐赠账号有调用限制。"""
+        token = os.environ.get("TUSHARE_TOKEN", "").strip()
+        if not token:
+            return None
+        try:
+            import tushare as ts  # noqa: PLC0415
+            return ts.pro_api(token)
+        except ImportError:
+            return None
 
     def _fetch_futures_zh_hist(self, params: dict[str, Any]) -> Any:
         symbol = params["symbol"]
         period = params.get("period", "daily")
         if period in {"1m", "5m", "15m", "30m", "60m"}:
-            return self.ak.futures_zh_minute_sina(symbol=symbol, period=period)
+            return self._try_sources([("sina", lambda: self.ak.futures_zh_minute_sina(symbol=symbol, period=period))])
+        start_date = params.get("start_date") or ""
+        end_date = params.get("end_date") or ""
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                if start_date:
+                    datetime.strptime(start_date[:10], fmt)
+                if end_date:
+                    datetime.strptime(end_date[:10], fmt)
+            except ValueError:
+                pass
+        s = str(start_date).replace("-", "")[:8] if start_date else ""
+        e = str(end_date).replace("-", "")[:8] if end_date else ""
+        if not s or not e:
+            from datetime import timedelta
+            today = date.today()
+            e = today.strftime("%Y%m%d")
+            s = (today - timedelta(days=7)).strftime("%Y%m%d")  # 短期减轻请求量
+
+        def _get_futures_daily() -> Any:
+            import re
+            sym_str = str(symbol).strip()
+            m = re.match(r"^([a-zA-Z]+)\d*", sym_str)
+            var = (m.group(1).upper() if m else sym_str.upper())
+            if len(var) >= 2:
+                var = var[:2]
+            elif len(var) == 1:
+                var = var  # e.g. I -> DCE
+            market = self._FUTURES_SYMBOL_TO_MARKET.get(var)
+            if not market:
+                for k in sorted(self._FUTURES_SYMBOL_TO_MARKET.keys(), key=len, reverse=True):
+                    if sym_str.upper().startswith(k):
+                        market = self._FUTURES_SYMBOL_TO_MARKET[k]
+                        break
+            if not market:
+                raise ValueError(f"Unknown futures symbol: {symbol}")
+            df = self.ak.get_futures_daily(start_date=s, end_date=e, market=market)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("get_futures_daily returned empty")
+            sym_lower = sym_str.lower()
+            filter_pat = sym_lower
+            if filter_pat.endswith("0") and len(filter_pat) <= 4:
+                filter_pat = re.sub(r"0+$", "", filter_pat) or sym_lower[:-1]
+            for col in ("symbol", "合约代码", "代码"):
+                if col in df.columns:
+                    df = df[df[col].astype(str).str.lower().str.contains(filter_pat, na=False)]
+                    break
+            if df is not None and hasattr(df, "empty") and not df.empty:
+                return df
+            raise ValueError("No matching symbol in get_futures_daily")
+
+        def _tushare_fut_daily() -> Any:
+            """Tushare fut_daily 备选，需 TUSHARE_TOKEN，未捐赠账号有调用限制。"""
+            import re
+            pro = self._get_tushare_pro()
+            if pro is None:
+                raise ValueError("TUSHARE_TOKEN not set")
+            sym_str = str(symbol).strip().upper()
+            m = re.match(r"^([A-Z]+)(\d*)", sym_str)
+            if not m:
+                raise ValueError(f"Invalid futures symbol: {symbol}")
+            var, num = m.group(1), m.group(2) or ""
+            if len(var) >= 2:
+                var = var[:2]
+            market = self._FUTURES_SYMBOL_TO_MARKET.get(var)
+            if not market:
+                for k in sorted(self._FUTURES_SYMBOL_TO_MARKET.keys(), key=len, reverse=True):
+                    if sym_str.startswith(k):
+                        market = self._FUTURES_SYMBOL_TO_MARKET[k]
+                        break
+            if not market:
+                raise ValueError(f"Unknown futures symbol: {symbol}")
+            suffix = self._TUSHARE_EXCHANGE_SUFFIX.get(market)
+            if not suffix:
+                raise ValueError(f"No Tushare suffix for {market}")
+            ts_code = f"{var}{num}.{suffix}" if num else f"{var}.{suffix}"
+            df = pro.fut_daily(ts_code=ts_code, start_date=s, end_date=e)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("Tushare fut_daily returned empty")
+            if "trade_date" in df.columns and "date" not in df.columns:
+                df = df.rename(columns={"trade_date": "date"})
+            if "vol" in df.columns and "volume" not in df.columns:
+                df = df.rename(columns={"vol": "volume"})
+            return df
+
+        # 日线：futures_daily / Tushare / sina / em（Tushare 需 TUSHARE_TOKEN，未捐赠有限制）
+        fetchers_base = [
+            ("futures_daily", _get_futures_daily),
+            ("tushare", _tushare_fut_daily),
+            ("sina", lambda: self.ak.futures_zh_daily_sina(symbol=symbol)),
+            ("em", lambda: self.ak.futures_hist_em(symbol=symbol, period="daily")),
+        ]
         if params.get("source") == "em":
-            return self.ak.futures_hist_em(symbol=symbol, period="daily")
-        return self.ak.futures_zh_daily_sina(symbol=symbol)
+            fetchers = [
+                ("em", lambda: self.ak.futures_hist_em(symbol=symbol, period="daily")),
+                ("futures_daily", _get_futures_daily),
+                ("tushare", _tushare_fut_daily),
+                ("sina", lambda: self.ak.futures_zh_daily_sina(symbol=symbol)),
+            ]
+        else:
+            fetchers = fetchers_base
+        return self._try_sources(fetchers)
+
+    # 主力合约静态回退（新浪 API 返回 HTML 时使用）
+    _MAIN_CONTRACT_FALLBACK: dict[str, str] = {
+        "cffex": "IF2504,IC2504,IH2504,IM2504",
+        "shfe": "rb2505,au2506,ag2506,cu2506",
+        "dce": "i2505,j2505,jm2505",
+        "czce": "TA505,MA505,RM505",
+        "gfex": "si2506",
+    }
 
     def _fetch_match_main_contract(self, params: dict[str, Any]) -> Any:
-        symbol = params.get("symbol") or params.get("exchange") or "cffex"
-        return [{"symbol": symbol, "contracts": self.ak.match_main_contract(symbol=symbol)}]
+        symbol = str(params.get("symbol") or params.get("exchange") or "cffex").lower()
+
+        def _sina() -> Any:
+            raw = self.ak.match_main_contract(symbol=symbol)
+            return [{"symbol": symbol, "contracts": raw}] if raw else None
+
+        def _fallback() -> Any:
+            fallback = self._MAIN_CONTRACT_FALLBACK.get(symbol)
+            if fallback:
+                return [{"symbol": symbol, "contracts": fallback, "_source": "fallback"}]
+            return [{"symbol": symbol, "contracts": "", "_source": "fallback"}]
+
+        return self._try_sources([
+            ("sina", _sina),
+            ("fallback", _fallback),
+        ])
 
     def _fetch_futures_basis(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "sys":
@@ -289,19 +534,35 @@ class AkshareBackend:
 
     def _fetch_fund_etf_market(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.fund_etf_hist_em(
-                symbol=params["symbol"],
-                period=params.get("period", "daily"),
-                start_date=params.get("start_date"),
-                end_date=params.get("end_date"),
-                adjust=params.get("adjust", ""),
+            return self._try_sources(
+                [
+                    (
+                        "em",
+                        lambda: self.ak.fund_etf_hist_em(
+                            symbol=params["symbol"],
+                            period=params.get("period", "daily"),
+                            start_date=params.get("start_date"),
+                            end_date=params.get("end_date"),
+                            adjust=params.get("adjust", ""),
+                        ),
+                    ),
+                ]
             )
-        return self.ak.fund_etf_spot_em()
+        return self._try_sources(
+            [
+                ("em", lambda: self.ak.fund_etf_spot_em()),
+                ("ths", lambda: self.ak.fund_etf_spot_ths(date="")),
+            ]
+        )
 
     def _fetch_fund_open_info(self, params: dict[str, Any]) -> Any:
+        symbol = params.get("symbol") or params.get("fund")
+        if not symbol:
+            raise ValueError("fund_open_info 需要 symbol 或 fund 参数")
+        # 仅传递 akshare 接受的参数，避免传入 fund 导致报错
         return self.ak.fund_open_fund_info_em(
-            fund=params["symbol"],
-            indicator=params.get("indicator", "单位净值走势"),
+            symbol=str(symbol),
+            indicator=str(params.get("indicator", "单位净值走势")),
         )
 
     _MACRO_SHORTHAND: dict[str, str] = {
@@ -397,18 +658,20 @@ class AkshareBackend:
             return self.ak.futures_spot_price(date=params.get("date"))
         if mode == "futures_spot_sys":
             symbol = self._resolve_commodity_symbol(params.get("symbol"), "RU")
-            # futures_spot_sys still uses the exchange code, keep original or best guess
-            # fall back to original code if not in map (exchange code != Chinese name here)
             raw = params.get("symbol", "RU")
             return self.ak.futures_spot_sys(symbol=raw)
-        # Default: use spot_price_qh which needs a Chinese commodity name.
-        # If no date is provided, get current spot price for specified commodity.
-        # When date is provided, use futures_spot_price to get full market snapshot.
         date = params.get("date")
         if date:
             return self.ak.futures_spot_price(date=date)
-        chinese_name = self._resolve_commodity_symbol(params.get("symbol"), "铜")
-        return self.ak.spot_price_qh(symbol=chinese_name)
+        # 无 date 时：spot_price_qh 依赖外部 token(_pcc) 可能失效，
+        # 优先用 futures_spot_price 获取当日全市场快照
+        try:
+            chinese_name = self._resolve_commodity_symbol(params.get("symbol"), "铜")
+            return self.ak.spot_price_qh(symbol=chinese_name)
+        except (KeyError, Exception):
+            from datetime import date as date_type
+
+            return self.ak.futures_spot_price(date=date_type.today().isoformat())
 
     # Mapping from user-supplied aliases to the SGE symbol format.
     _SGE_SYMBOL_MAP: dict[str, str] = {
@@ -437,13 +700,38 @@ class AkshareBackend:
 
     def _fetch_bond_zh_hs_market(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.bond_zh_hs_daily(symbol=params["symbol"])
-        return self.ak.bond_zh_hs_spot()
+            return self._try_sources([("sina", lambda: self.ak.bond_zh_hs_daily(symbol=params["symbol"]))])
+        return self._try_sources(
+            [
+                ("sina_full", lambda: self.ak.bond_zh_hs_spot()),
+                ("sina_short", lambda: self.ak.bond_zh_hs_spot(start_page="1", end_page="3")),
+                ("bank_quote", lambda: self.ak.bond_spot_quote()),
+            ]
+        )
 
     def _fetch_bond_zh_hs_cov_market(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.bond_zh_hs_cov_daily(symbol=params["symbol"])
-        return self.ak.bond_zh_hs_cov_spot()
+            return self._try_sources([
+                ("sina", lambda: self.ak.bond_zh_hs_cov_daily(symbol=params["symbol"])),
+            ])
+
+        def _tushare_cb_basic() -> Any:
+            pro = self._get_tushare_pro()
+            if pro is None:
+                raise ValueError("TUSHARE_TOKEN not set")
+            df = pro.cb_basic()
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("Tushare cb_basic returned empty")
+            return df
+
+        return self._try_sources(
+            [
+                ("sina", lambda: self.ak.bond_zh_hs_cov_spot()),
+                ("em_cov", lambda: self.ak.bond_zh_cov()),
+                ("em_comparison", lambda: self.ak.bond_cov_comparison()),
+                ("tushare_cb", _tushare_cb_basic),
+            ]
+        )
 
     def _fetch_bond_cb_meta(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "summary":
@@ -452,25 +740,49 @@ class AkshareBackend:
 
     def _fetch_stock_board_industry(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.stock_board_industry_hist_em(
-                symbol=params["symbol"],
-                start_date=params.get("start_date"),
-                end_date=params.get("end_date"),
-                period=params.get("period", "daily"),
-                adjust=params.get("adjust", ""),
+            return self._try_sources(
+                [
+                    (
+                        "em",
+                        lambda: self.ak.stock_board_industry_hist_em(
+                            symbol=params["symbol"],
+                            start_date=params.get("start_date"),
+                            end_date=params.get("end_date"),
+                            period=params.get("period", "daily"),
+                            adjust=params.get("adjust", ""),
+                        ),
+                    ),
+                ]
             )
-        return self.ak.stock_board_industry_name_em()
+        return self._try_sources(
+            [
+                ("em", lambda: self.ak.stock_board_industry_name_em()),
+                ("ths", lambda: self.ak.stock_board_industry_name_ths()),
+            ]
+        )
 
     def _fetch_stock_board_concept(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self.ak.stock_board_concept_hist_em(
-                symbol=params["symbol"],
-                start_date=params.get("start_date"),
-                end_date=params.get("end_date"),
-                period=params.get("period", "daily"),
-                adjust=params.get("adjust", ""),
+            return self._try_sources(
+                [
+                    (
+                        "em",
+                        lambda: self.ak.stock_board_concept_hist_em(
+                            symbol=params["symbol"],
+                            start_date=params.get("start_date"),
+                            end_date=params.get("end_date"),
+                            period=params.get("period", "daily"),
+                            adjust=params.get("adjust", ""),
+                        ),
+                    ),
+                ]
             )
-        return self.ak.stock_board_concept_name_em()
+        return self._try_sources(
+            [
+                ("em", lambda: self.ak.stock_board_concept_name_em()),
+                ("ths", lambda: self.ak.stock_board_concept_name_ths()),
+            ]
+        )
 
 
 def create_backend(test_mode: bool):

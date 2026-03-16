@@ -95,8 +95,7 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    from .backend import _patch_ssl_if_needed  # noqa: PLC0415
-    _patch_ssl_if_needed()
+    # 不在启动时 patch SSL，由请求 verify_ssl 或 backend 按 env 处理
     httpd = ThreadingHTTPServer((HOST, PORT), AkshareRequestHandler)
     try:
         httpd.serve_forever()

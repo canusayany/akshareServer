@@ -28,6 +28,11 @@
 - `test/index.test.js`：Node 客户端测试。
 - `test/tool.test.js`：agent tool 调用层测试。
 - `docs/design.md`：设计说明。
+- `docs/API.md`：HTTP 接口文档（含入参、返回值、实际返回数据示例）。
+
+## API 接口测试报告
+
+运行 `npm run test:report:auto` 可自动启动服务器并测试全部接口，生成 `reports/api_test_report.json` 和 `docs/API.md`。默认启用 SSL 验证；多数据源回退可在主源失败时自动切备选。
 
 ## 运行方式
 
@@ -181,12 +186,24 @@ const bondTool = registry.getTool("bond_cb_meta");
 const result = await registry.invoke("macro_china_all");
 ```
 
+## API 测试报告
+
+启动真实服务器后运行：
+
+```bash
+npm run test:report        # 需先 .\start_nossl.ps1
+npm run test:report:auto   # 自动启动服务器并测试
+```
+
+输出：`reports/api_test_report.json`、`docs/API.md`（各接口入参、返回值）
+
 ## 环境变量
 
 - `AKSHARE_NODE_PYTHON_BIN`：Python 可执行文件路径。Windows 默认 `py`，Linux 默认 `python3`。
 - `AKSHARE_NODE_DB_PATH`：SQLite 数据库路径，默认 `./data/akshare_cache.sqlite`。
 - `AKSHARE_NODE_MAX_BYTES`：单次响应最大字节数，默认 `2000`。
 - `AKSHARE_NODE_TEST_MODE`：测试模式。开启后使用内置 stub 后端，不访问真实 `akshare`。
+- `TUSHARE_TOKEN`：可选，Tushare 备选数据源 Token。设置后启用期货日线等 Tushare 回退。未捐赠账号有调用限制。可复制 `.env.example` 为 `.env` 并填入 token。
 
 ## Windows 开发、Linux 运行注意事项
 

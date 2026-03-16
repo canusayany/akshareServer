@@ -1,0 +1,862 @@
+{
+  "timestamp": "2026-03-16T13:05:05.406Z",
+  "baseUrl": "http://127.0.0.1:8888",
+  "interfaces": {
+    "stock_zh_a_spot": {
+      "interface": "stock_zh_a_spot",
+      "params": {},
+      "success": true,
+      "rowCount": 7,
+      "error": null,
+      "sampleRowKeys": [
+        "代码",
+        "名称",
+        "最新价",
+        "涨跌额",
+        "涨跌幅",
+        "买入",
+        "卖出",
+        "昨收",
+        "今开",
+        "最高"
+      ],
+      "actualResponseSample": [
+        {
+          "代码": "bj920000",
+          "名称": "安徽凤凰",
+          "最新价": 17.41,
+          "涨跌额": -0.36,
+          "涨跌幅": -2.026,
+          "买入": 17.41,
+          "卖出": 17.43,
+          "昨收": 17.77,
+          "今开": 17.77,
+          "最高": 17.77,
+          "最低": 17.31,
+          "成交量": 509011,
+          "成交额": 8892290,
+          "时间戳": "15:30:02"
+        },
+        {
+          "代码": "sh600805",
+          "名称": "悦达投资",
+          "最新价": 5.79,
+          "涨跌额": 0.15,
+          "涨跌幅": 2.66,
+          "买入": 5.78,
+          "卖出": 5.79,
+          "昨收": 5.64,
+          "今开": 5.63,
+          "最高": 5.85,
+          "最低": 5.6,
+          "成交量": 34413149,
+          "成交额": 197359472,
+          "时间戳": "15:00:03"
+        },
+        {
+          "代码": "sh603899",
+          "名称": "晨光股份",
+          "最新价": 26.2,
+          "涨跌额": 0.19,
+          "涨跌幅": 0.73,
+          "买入": 26.2,
+          "卖出": 26.21,
+          "昨收": 26.01,
+          "今开": 26.02,
+          "最高": 26.24,
+          "最低": 25.91,
+          "成交量": 2698100,
+          "成交额": 70491133,
+          "时间戳": "15:00:01"
+        }
+      ]
+    },
+    "stock_zh_a_hist": {
+      "interface": "stock_zh_a_hist",
+      "params": {
+        "symbol": "000001",
+        "period": "daily",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-31"
+      },
+      "success": true,
+      "rowCount": 0,
+      "error": null,
+      "sampleRowKeys": [],
+      "actualResponseSample": []
+    },
+    "stock_intraday_em": {
+      "interface": "stock_intraday_em",
+      "params": {
+        "symbol": "000001"
+      },
+      "success": true,
+      "rowCount": 25,
+      "error": null,
+      "sampleRowKeys": [
+        "时间",
+        "成交价",
+        "手数",
+        "买卖盘性质"
+      ],
+      "actualResponseSample": [
+        {
+          "时间": "09:15:00",
+          "成交价": 10.92,
+          "手数": 110,
+          "买卖盘性质": "中性盘"
+        },
+        {
+          "时间": "09:35:57",
+          "成交价": 10.93,
+          "手数": 10,
+          "买卖盘性质": "卖盘"
+        },
+        {
+          "时间": "09:45:00",
+          "成交价": 10.91,
+          "手数": 132,
+          "买卖盘性质": "卖盘"
+        }
+      ]
+    },
+    "stock_bid_ask_em": {
+      "interface": "stock_bid_ask_em",
+      "params": {
+        "symbol": "000001"
+      },
+      "success": true,
+      "rowCount": 36,
+      "error": null,
+      "sampleRowKeys": [
+        "item",
+        "value"
+      ],
+      "actualResponseSample": [
+        {
+          "item": "sell_5",
+          "value": 10.97
+        },
+        {
+          "item": "sell_5_vol",
+          "value": 990800
+        },
+        {
+          "item": "sell_4",
+          "value": 10.96
+        }
+      ]
+    },
+    "futures_zh_spot": {
+      "interface": "futures_zh_spot",
+      "params": {
+        "symbol": "PTA"
+      },
+      "success": true,
+      "rowCount": 5,
+      "error": null,
+      "sampleRowKeys": [
+        "symbol",
+        "exchange",
+        "name",
+        "trade",
+        "settlement",
+        "presettlement",
+        "open",
+        "high",
+        "low",
+        "close"
+      ],
+      "actualResponseSample": [
+        {
+          "symbol": "TA0",
+          "exchange": "czce",
+          "name": "PTA连续",
+          "trade": 6982,
+          "settlement": 7006,
+          "presettlement": 6960,
+          "open": 6820,
+          "high": 7256,
+          "low": 6720,
+          "close": 6982,
+          "bidprice1": 6980,
+          "askprice1": 6984,
+          "bidvol1": 28,
+          "askvol1": 7,
+          "volume": 2345417,
+          "position": 1164940,
+          "ticktime": "15:00:00",
+          "tradedate": "2026-03-16",
+          "preclose": 6934,
+          "changepercent": 0.0031609,
+          "bid": 0,
+          "ask": 0,
+          "prevsettlement": 6960
+        },
+        {
+          "symbol": "TA2607",
+          "exchange": "czce",
+          "name": "PTA2607",
+          "trade": 6840,
+          "settlement": 6876,
+          "presettlement": 6786,
+          "open": 6710,
+          "high": 7100,
+          "low": 6590,
+          "close": 6840,
+          "bidprice1": 6840,
+          "askprice1": 6844,
+          "bidvol1": 45,
+          "askvol1": 7,
+          "volume": 71726,
+          "position": 92496,
+          "ticktime": "15:00:00",
+          "tradedate": "2026-03-16",
+          "preclose": 6790,
+          "changepercent": 0.0079576,
+          "bid": 0,
+          "ask": 0,
+          "prevsettlement": 6786
+        },
+        {
+          "symbol": "TA2608",
+          "exchange": "czce",
+          "name": "PTA2608",
+          "trade": 6762,
+          "settlement": 6794,
+          "presettlement": 6704,
+          "open": 6596,
+          "high": 7010,
+          "low": 6564,
+          "close": 6762,
+          "bidprice1": 6760,
+          "askprice1": 6772,
+          "bidvol1": 12,
+          "askvol1": 1,
+          "volume": 33289,
+          "position": 28814,
+          "ticktime": "15:00:00",
+          "tradedate": "2026-03-16",
+          "preclose": 6700,
+          "changepercent": 0.0086516,
+          "bid": 0,
+          "ask": 0,
+          "prevsettlement": 6704
+        }
+      ]
+    },
+    "futures_zh_hist": {
+      "interface": "futures_zh_hist",
+      "params": {
+        "symbol": "RB2505",
+        "start_date": "2025-03-05",
+        "end_date": "2025-03-05"
+      },
+      "success": true,
+      "rowCount": 1,
+      "error": null,
+      "sampleRowKeys": [
+        "index",
+        "symbol",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "open_interest",
+        "turnover"
+      ],
+      "actualResponseSample": [
+        {
+          "index": 118,
+          "symbol": "RB2505",
+          "date": "20250305",
+          "open": 3279,
+          "high": 3288,
+          "low": 3252,
+          "close": 3259,
+          "volume": 1789010,
+          "open_interest": 2047118,
+          "turnover": 5847403.149,
+          "settle": 3268,
+          "pre_settle": 3282,
+          "variety": "RB"
+        }
+      ]
+    },
+    "match_main_contract": {
+      "interface": "match_main_contract",
+      "params": {},
+      "success": true,
+      "rowCount": 1,
+      "error": null,
+      "sampleRowKeys": [
+        "symbol",
+        "contracts"
+      ],
+      "actualResponseSample": [
+        {
+          "symbol": "cffex",
+          "contracts": "IF2606,TF2606,IH2603,IC2606,TS2606,IM2606"
+        }
+      ]
+    },
+    "futures_basis": {
+      "interface": "futures_basis",
+      "params": {
+        "date": "2024-01-15"
+      },
+      "success": true,
+      "rowCount": 5,
+      "error": null,
+      "sampleRowKeys": [
+        "date",
+        "symbol",
+        "spot_price",
+        "near_contract",
+        "near_contract_price",
+        "dominant_contract",
+        "dominant_contract_price",
+        "near_month",
+        "dominant_month",
+        "near_basis"
+      ],
+      "actualResponseSample": [
+        {
+          "date": "20240115",
+          "symbol": "C",
+          "spot_price": 2437.14,
+          "near_contract": "c2401",
+          "near_contract_price": 2403,
+          "dominant_contract": "c2405",
+          "dominant_contract_price": 2384,
+          "near_month": "2401",
+          "dominant_month": "2405",
+          "near_basis": -34.13999999999987,
+          "dom_basis": -53.13999999999987,
+          "near_basis_rate": -0.014008222752898813,
+          "dom_basis_rate": -0.02180424596042896
+        },
+        {
+          "date": "20240115",
+          "symbol": "EB",
+          "spot_price": 8550,
+          "near_contract": "eb2401",
+          "near_contract_price": 8373,
+          "dominant_contract": "eb2403",
+          "dominant_contract_price": 8530,
+          "near_month": "2401",
+          "dominant_month": "2403",
+          "near_basis": -177,
+          "dom_basis": -20,
+          "near_basis_rate": -0.020701754385964888,
+          "dom_basis_rate": -0.002339181286549752
+        },
+        {
+          "date": "20240115",
+          "symbol": "SM",
+          "spot_price": 6121.67,
+          "near_contract": "SM401",
+          "near_contract_price": 6340,
+          "dominant_contract": "SM403",
+          "dominant_contract_price": 6356,
+          "near_month": "2401",
+          "dominant_month": "2403",
+          "near_basis": 218.32999999999993,
+          "dom_basis": 234.32999999999993,
+          "near_basis_rate": 0.035665104456790386,
+          "dom_basis_rate": 0.03827877033554561
+        }
+      ]
+    },
+    "fund_meta": {
+      "interface": "fund_meta",
+      "params": {},
+      "success": true,
+      "rowCount": 11,
+      "error": null,
+      "sampleRowKeys": [
+        "基金代码",
+        "拼音缩写",
+        "基金简称",
+        "基金类型",
+        "拼音全称"
+      ],
+      "actualResponseSample": [
+        {
+          "基金代码": "000001",
+          "拼音缩写": "HXCZHH",
+          "基金简称": "华夏成长混合",
+          "基金类型": "混合型-灵活",
+          "拼音全称": "HUAXIACHENGZHANGHUNHE"
+        },
+        {
+          "基金代码": "003861",
+          "拼音缩写": "ZSXFHHA",
+          "基金简称": "招商兴福混合A",
+          "基金类型": "混合型-灵活",
+          "拼音全称": "ZHAOSHANGXINGFUHUNHEA"
+        },
+        {
+          "基金代码": "007461",
+          "拼音缩写": "DBRHZQA",
+          "基金简称": "德邦锐泓债券A",
+          "基金类型": "债券型-长债",
+          "拼音全称": "DEBANGRUIHONGZHAIQUANA"
+        }
+      ]
+    },
+    "fund_etf_market": {
+      "interface": "fund_etf_market",
+      "params": {},
+      "success": true,
+      "rowCount": 4,
+      "error": null,
+      "sampleRowKeys": [
+        "序号",
+        "基金代码",
+        "基金名称",
+        "当前-单位净值",
+        "当前-累计净值",
+        "前一日-单位净值",
+        "前一日-累计净值",
+        "增长值",
+        "增长率",
+        "赎回状态"
+      ],
+      "actualResponseSample": [
+        {
+          "序号": 1,
+          "基金代码": "159297",
+          "基金名称": "南方国证港股通创新药ETF",
+          "当前-单位净值": 0.7682,
+          "当前-累计净值": 0.7682,
+          "前一日-单位净值": 0.7447,
+          "前一日-累计净值": 0.7447,
+          "增长值": 0.0235,
+          "增长率": 3.16,
+          "赎回状态": "开放",
+          "申购状态": "开放",
+          "最新-交易日": "2026-03-16",
+          "最新-单位净值": 0.7682,
+          "最新-累计净值": 0.7682,
+          "基金类型": "股票型",
+          "查询日期": "2026-03-16"
+        },
+        {
+          "序号": 497,
+          "基金代码": "159883",
+          "基金名称": "医疗器械ETF永赢",
+          "当前-单位净值": 0.5018,
+          "当前-累计净值": 0.5018,
+          "前一日-单位净值": 0.5018,
+          "前一日-累计净值": 0.5018,
+          "增长值": 0,
+          "增长率": 0,
+          "赎回状态": "开放",
+          "申购状态": "开放",
+          "最新-交易日": "2026-03-16",
+          "最新-单位净值": 0.5018,
+          "最新-累计净值": 0.5018,
+          "基金类型": "股票型",
+          "查询日期": "2026-03-16"
+        },
+        {
+          "序号": 993,
+          "基金代码": "520990",
+          "基金名称": "景顺长城中证国新港股通央企红利ETF",
+          "当前-单位净值": null,
+          "当前-累计净值": null,
+          "前一日-单位净值": 1.115,
+          "前一日-累计净值": 1.1725,
+          "增长值": null,
+          "增长率": null,
+          "赎回状态": "开放",
+          "申购状态": "开放",
+          "最新-交易日": "2026-03-13",
+          "最新-单位净值": 1.115,
+          "最新-累计净值": 1.1725,
+          "基金类型": "股票型",
+          "查询日期": "2026-03-16"
+        }
+      ]
+    },
+    "fund_open_info": {
+      "interface": "fund_open_info",
+      "params": {
+        "symbol": "110011"
+      },
+      "success": true,
+      "rowCount": 27,
+      "error": null,
+      "sampleRowKeys": [
+        "净值日期",
+        "单位净值",
+        "日增长率"
+      ],
+      "actualResponseSample": [
+        {
+          "净值日期": "2008-06-19",
+          "单位净值": 1,
+          "日增长率": 0
+        },
+        {
+          "净值日期": "2009-05-05",
+          "单位净值": 1.279,
+          "日增长率": 0.7483
+        },
+        {
+          "净值日期": "2010-01-04",
+          "单位净值": 1.6802,
+          "日增长率": -0.3144
+        }
+      ]
+    },
+    "macro_china_all": {
+      "interface": "macro_china_all",
+      "params": {},
+      "success": true,
+      "rowCount": 11,
+      "error": null,
+      "sampleRowKeys": [
+        "dataset",
+        "季度",
+        "国内生产总值-绝对值",
+        "国内生产总值-同比增长",
+        "第一产业-绝对值",
+        "第一产业-同比增长",
+        "第二产业-绝对值",
+        "第二产业-同比增长",
+        "第三产业-绝对值",
+        "第三产业-同比增长"
+      ],
+      "actualResponseSample": [
+        {
+          "dataset": "macro_china_gdp",
+          "季度": "2025年第1-4季度",
+          "国内生产总值-绝对值": 1401879.2,
+          "国内生产总值-同比增长": 5,
+          "第一产业-绝对值": 93346.8,
+          "第一产业-同比增长": 3.9,
+          "第二产业-绝对值": 499653,
+          "第二产业-同比增长": 4.5,
+          "第三产业-绝对值": 808879.3,
+          "第三产业-同比增长": 5.4
+        },
+        {
+          "dataset": "macro_china_ppi",
+          "月份": "2024年05月份",
+          "当月": 98.6,
+          "当月同比增长": -1.4,
+          "累计": 97.6
+        },
+        {
+          "dataset": "macro_china_pmi",
+          "月份": "2017年12月份",
+          "制造业-指数": 51.6,
+          "制造业-同比增长": 0.38910506,
+          "非制造业-指数": 55,
+          "非制造业-同比增长": 0.91743119
+        }
+      ]
+    },
+    "commodity_basis": {
+      "interface": "commodity_basis",
+      "params": {
+        "date": "2024-03-15"
+      },
+      "success": true,
+      "rowCount": 5,
+      "error": null,
+      "sampleRowKeys": [
+        "date",
+        "symbol",
+        "spot_price",
+        "near_contract",
+        "near_contract_price",
+        "dominant_contract",
+        "dominant_contract_price",
+        "near_month",
+        "dominant_month",
+        "near_basis"
+      ],
+      "actualResponseSample": [
+        {
+          "date": "20240315",
+          "symbol": "C",
+          "spot_price": 2350,
+          "near_contract": "c2405",
+          "near_contract_price": 2451,
+          "dominant_contract": "c2405",
+          "dominant_contract_price": 2451,
+          "near_month": "2405",
+          "dominant_month": "2405",
+          "near_basis": 101,
+          "dom_basis": 101,
+          "near_basis_rate": 0.04297872340425535,
+          "dom_basis_rate": 0.04297872340425535
+        },
+        {
+          "date": "20240315",
+          "symbol": "EB",
+          "spot_price": 9430,
+          "near_contract": "eb2403",
+          "near_contract_price": 9517,
+          "dominant_contract": "eb2405",
+          "dominant_contract_price": 9400,
+          "near_month": "2403",
+          "dominant_month": "2405",
+          "near_basis": 87,
+          "dom_basis": -30,
+          "near_basis_rate": 0.009225874867444306,
+          "dom_basis_rate": -0.0031813361611876534
+        },
+        {
+          "date": "20240315",
+          "symbol": "SM",
+          "spot_price": 5906.67,
+          "near_contract": "SM404",
+          "near_contract_price": 6092,
+          "dominant_contract": "SM405",
+          "dominant_contract_price": 6122,
+          "near_month": "2404",
+          "dominant_month": "2405",
+          "near_basis": 185.32999999999993,
+          "dom_basis": 215.32999999999993,
+          "near_basis_rate": 0.03137639312844631,
+          "dom_basis_rate": 0.03645539703420031
+        }
+      ]
+    },
+    "spot_sge": {
+      "interface": "spot_sge",
+      "params": {},
+      "success": true,
+      "rowCount": 19,
+      "error": null,
+      "sampleRowKeys": [
+        "品种",
+        "时间",
+        "现价",
+        "更新时间"
+      ],
+      "actualResponseSample": [
+        {
+          "品种": "Au99.99",
+          "时间": "00:00:00",
+          "现价": 1112.61,
+          "更新时间": "2026年03月17日 20:36:55"
+        },
+        {
+          "品种": "Au99.99",
+          "时间": "00:33:00",
+          "现价": 1112.61,
+          "更新时间": "2026年03月17日 20:36:55"
+        },
+        {
+          "品种": "Au99.99",
+          "时间": "01:06:00",
+          "现价": 1112.61,
+          "更新时间": "2026年03月17日 20:36:55"
+        }
+      ]
+    },
+    "bond_zh_hs_market": {
+      "interface": "bond_zh_hs_market",
+      "params": {},
+      "success": true,
+      "rowCount": 8,
+      "error": null,
+      "sampleRowKeys": [
+        "报价机构",
+        "债券简称",
+        "买入净价",
+        "卖出净价",
+        "买入收益率",
+        "卖出收益率"
+      ],
+      "actualResponseSample": [
+        {
+          "报价机构": "重庆农村商行",
+          "债券简称": "24交行债03BC",
+          "买入净价": 100.71,
+          "卖出净价": 101.01,
+          "买入收益率": 1.6921,
+          "卖出收益率": 1.5021
+        },
+        {
+          "报价机构": "中信证券",
+          "债券简称": "24交行债03BC",
+          "买入净价": 100.53,
+          "卖出净价": 101.18,
+          "买入收益率": 1.8,
+          "卖出收益率": 1.4
+        },
+        {
+          "报价机构": "中信银行",
+          "债券简称": "16铁道07",
+          "买入净价": 100.82,
+          "卖出净价": 100.93,
+          "买入收益率": 1.6361,
+          "卖出收益率": 1.4561
+        }
+      ]
+    },
+    "bond_zh_hs_cov_market": {
+      "interface": "bond_zh_hs_cov_market",
+      "params": {},
+      "success": true,
+      "rowCount": 7,
+      "error": null,
+      "sampleRowKeys": [
+        "symbol",
+        "name",
+        "trade",
+        "pricechange",
+        "changepercent",
+        "buy",
+        "sell",
+        "settlement",
+        "open",
+        "high"
+      ],
+      "actualResponseSample": [
+        {
+          "symbol": "bj810011",
+          "name": "优机定转",
+          "trade": "0.000",
+          "pricechange": "0.000",
+          "changepercent": "0.000",
+          "buy": "0.000",
+          "sell": "0.000",
+          "settlement": "100.500",
+          "open": "0.000",
+          "high": "0.000",
+          "low": "0.000",
+          "volume": 0,
+          "amount": 0,
+          "code": "810011",
+          "ticktime": "15:30:02"
+        },
+        {
+          "symbol": "sh113056",
+          "name": "重银转债",
+          "trade": "129.931",
+          "pricechange": "-0.100",
+          "changepercent": "-0.077",
+          "buy": "129.909",
+          "sell": "129.930",
+          "settlement": "130.031",
+          "open": "130.016",
+          "high": "130.650",
+          "low": "129.753",
+          "volume": 2778520,
+          "amount": 361975029,
+          "code": "113056",
+          "ticktime": "15:00:01"
+        },
+        {
+          "symbol": "sh113688",
+          "name": "国检转债",
+          "trade": "138.384",
+          "pricechange": "-0.337",
+          "changepercent": "-0.243",
+          "buy": "138.361",
+          "sell": "138.429",
+          "settlement": "138.721",
+          "open": "138.500",
+          "high": "138.725",
+          "low": "136.500",
+          "volume": 331870,
+          "amount": 45674371,
+          "code": "113688",
+          "ticktime": "15:00:01"
+        }
+      ]
+    },
+    "bond_cb_meta": {
+      "interface": "bond_cb_meta",
+      "params": {
+        "mode": "summary"
+      },
+      "success": true,
+      "rowCount": 15,
+      "error": null,
+      "sampleRowKeys": [
+        "item",
+        "value"
+      ],
+      "actualResponseSample": [
+        {
+          "item": "债券类型",
+          "value": "普通企业债"
+        },
+        {
+          "item": "计息方式",
+          "value": "固定利率"
+        },
+        {
+          "item": "付息方式",
+          "value": "周期性付息"
+        }
+      ]
+    },
+    "stock_board_industry": {
+      "interface": "stock_board_industry",
+      "params": {},
+      "success": true,
+      "rowCount": 46,
+      "error": null,
+      "sampleRowKeys": [
+        "name",
+        "code"
+      ],
+      "actualResponseSample": [
+        {
+          "name": "半导体",
+          "code": "881121"
+        },
+        {
+          "name": "白色家电",
+          "code": "881131"
+        },
+        {
+          "name": "包装印刷",
+          "code": "881138"
+        }
+      ]
+    },
+    "stock_board_concept": {
+      "interface": "stock_board_concept",
+      "params": {},
+      "success": true,
+      "rowCount": 48,
+      "error": null,
+      "sampleRowKeys": [
+        "name",
+        "code"
+      ],
+      "actualResponseSample": [
+        {
+          "name": "阿尔茨海默概念",
+          "code": "308614"
+        },
+        {
+          "name": "百度概念",
+          "code": "301259"
+        },
+        {
+          "name": "参股银行",
+          "code": "301270"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "errors": []
+  }
+}

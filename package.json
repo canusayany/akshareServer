@@ -6,10 +6,14 @@
   "main": "src/index.js",
   "scripts": {
     "test": "node --test",
-    "test:http": "node scripts/run_http_suite.js"
+    "test:http": "node scripts/run_http_suite.js",
+    "test:report": "node scripts/api_report.js",
+    "test:report:auto": "node scripts/run_api_report.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
   }
 }
-
