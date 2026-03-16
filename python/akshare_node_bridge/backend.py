@@ -214,8 +214,17 @@ class StubBackend:
 
 def _filter_by_symbol(records: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
     """按 代码/symbol 字段过滤记录"""
-    sym = str(symbol)
-    return [r for r in records if str(r.get("代码") or r.get("symbol", "")) == sym]
+    sym = str(symbol).zfill(6)
+    return [
+        r for r in records
+        if str(r.get("代码") or r.get("symbol", "")).zfill(6) == sym
+    ]
+
+
+def _stock_symbol_to_ts_code(symbol: str) -> str:
+    """A股6位代码转 tushare ts_code：600xxx->SH，0/3xxx->SZ"""
+    s = str(symbol).zfill(6)
+    return f"{s}.SH" if s.startswith("6") else f"{s}.SZ"
 
 
 def _get_tushare_pro():  # noqa: ANN202
@@ -273,7 +282,26 @@ class AkshareBackend:
             rec = _normalize_result(df)
             return _filter_by_symbol(rec, symbol) or df
 
-        return self._try_sources([("em", _em), ("sina", _sina)])
+        def _tushare() -> Any:
+            """Tushare daily 作为行情备用：当日日线作为最新价。需 TUSHARE_TOKEN。"""
+            pro = _get_tushare_pro()
+            if pro is None:
+                raise ValueError("TUSHARE_TOKEN not set")
+            today = date.today().strftime("%Y%m%d")
+            if symbol:
+                ts_code = _stock_symbol_to_ts_code(symbol)
+                df = pro.daily(ts_code=ts_code, trade_date=today)
+            else:
+                df = pro.daily(trade_date=today)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("Tushare daily returned empty")
+            df = df.rename(columns={"trade_date": "日期", "vol": "成交量"})
+            df["代码"] = df["ts_code"].str[:6]
+            df["最新价"] = df["close"]
+            df["涨跌幅"] = df.get("pct_chg")
+            return df
+
+        return self._try_sources([("em", _em), ("sina", _sina), ("tushare", _tushare)])
 
     def _fetch_stock_zh_a_hist(self, params: dict[str, Any]) -> Any:
         symbol = params["symbol"]
@@ -286,13 +314,39 @@ class AkshareBackend:
                 period=period.replace("m", ""),
                 adjust=params.get("adjust", ""),
             )
-        return self.ak.stock_zh_a_hist(
-            symbol=symbol,
-            period=period,
-            start_date=params.get("start_date"),
-            end_date=params.get("end_date"),
-            adjust=params.get("adjust", ""),
-        )
+
+        def _akshare() -> Any:
+            return self.ak.stock_zh_a_hist(
+                symbol=symbol,
+                period=period,
+                start_date=params.get("start_date"),
+                end_date=params.get("end_date"),
+                adjust=params.get("adjust", ""),
+            )
+
+        def _tushare() -> Any:
+            """Tushare daily 作为日线备用。需 TUSHARE_TOKEN。"""
+            pro = _get_tushare_pro()
+            if pro is None:
+                raise ValueError("TUSHARE_TOKEN not set")
+            s = str(params.get("start_date") or "").replace("-", "")[:8]
+            e = str(params.get("end_date") or "").replace("-", "")[:8]
+            if not s or not e:
+                from datetime import timedelta
+                today = date.today()
+                e = today.strftime("%Y%m%d")
+                s = (today - timedelta(days=30)).strftime("%Y%m%d")
+            ts_code = _stock_symbol_to_ts_code(symbol)
+            df = pro.daily(ts_code=ts_code, start_date=s, end_date=e)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("Tushare daily returned empty")
+            df = df.rename(columns={
+                "trade_date": "日期", "open": "开盘", "close": "收盘",
+                "high": "最高", "low": "最低", "vol": "成交量",
+            })
+            return df
+
+        return self._try_sources([("akshare", _akshare), ("tushare", _tushare)])
 
     def _fetch_stock_intraday_em(self, params: dict[str, Any]) -> Any:
         return self.ak.stock_intraday_em(symbol=params["symbol"])
@@ -301,6 +355,8 @@ class AkshareBackend:
         return self.ak.stock_bid_ask_em(symbol=params["symbol"])
 
     def _fetch_futures_zh_spot(self, params: dict[str, Any]) -> Any:
+        import re
+
         symbol = params.get("symbol")
         market = params.get("market", "CF")
         adjust = params.get("adjust", "0")
@@ -314,34 +370,90 @@ class AkshareBackend:
                     f"期货行情数据源返回异常 ({e.__class__.__name__})，请稍后重试"
                 ) from e
 
-        # symbol 为合约代码(含数字如 RB2505)用 futures_zh_spot；为品种名(如 PTA)用 futures_zh_realtime
-        if symbol:
-            import re
+        def _futures_symbol_to_ts_code(sym: str) -> str:
+            """期货合约代码转 tushare ts_code：IF2606->IF2606.CFFEX, rb2505->RB2505.SHF"""
+            sym_u = str(sym).strip().upper()
+            m = re.match(r"^([A-Z]+)(\d*)", sym_u)
+            if not m:
+                raise ValueError(f"Invalid futures symbol: {sym}")
+            var, num = m.group(1), m.group(2) or ""
+            if len(var) >= 2:
+                var = var[:2]
+            mkt = self._FUTURES_SYMBOL_TO_MARKET.get(var)
+            if not mkt:
+                for k in sorted(self._FUTURES_SYMBOL_TO_MARKET.keys(), key=len, reverse=True):
+                    if sym_u.startswith(k):
+                        mkt = self._FUTURES_SYMBOL_TO_MARKET[k]
+                        break
+            if not mkt:
+                raise ValueError(f"Unknown futures symbol: {sym}")
+            suffix = self._TUSHARE_EXCHANGE_SUFFIX.get(mkt)
+            if not suffix:
+                raise ValueError(f"No Tushare suffix for {mkt}")
+            return f"{var}{num}.{suffix}" if num else f"{var}.{suffix}"
 
-            if re.search(r"\d", str(symbol)):  # 含数字视为合约代码
-                return _safe_spot(symbol, market)
-            try:
-                return self.ak.futures_zh_realtime(symbol=symbol)
-            except (IndexError, KeyError) as e:
-                raise ValueError(
-                    f"期货行情数据源返回异常 ({e.__class__.__name__})，请稍后重试"
-                ) from e
-        # 无 symbol 时从 match_main_contract 获取主力合约
-        try:
-            main = self.ak.match_main_contract(symbol="shfe")
-            if main and isinstance(main, str):
-                first = (main.split(",")[0] if "," in main else main).strip()
-                if first:
-                    return _safe_spot(first, "CF")
-        except Exception:
-            pass
-        # 备选合约：依次尝试，避免单一合约数据源异常导致全部失败
-        for fallback in ("rb2505", "au2506", "cu2504"):
-            try:
-                return _safe_spot(fallback, "CF")
-            except ValueError:
-                continue
-        raise ValueError("期货行情数据源暂时不可用，请稍后重试")
+        def _akshare_spot() -> Any:
+            if symbol:
+                if re.search(r"\d", str(symbol)):
+                    return _safe_spot(symbol, market)
+                try:
+                    return self.ak.futures_zh_realtime(symbol=symbol)
+                except (IndexError, KeyError) as e:
+                    raise ValueError(
+                        f"期货行情数据源返回异常 ({e.__class__.__name__})，请稍后重试"
+                    ) from e
+            for exch in ("cffex", "shfe", "dce"):
+                try:
+                    main = self.ak.match_main_contract(symbol=exch)
+                    if main and isinstance(main, str):
+                        first = (main.split(",")[0] if "," in main else main).strip()
+                        if first:
+                            return _safe_spot(first, "CF")
+                except Exception:
+                    pass
+            yy = datetime.now().strftime("%y")
+            for fallback in (f"IF{yy}06", f"rb{yy}05", f"au{yy}06", f"cu{yy}06"):
+                try:
+                    return _safe_spot(fallback, "CF")
+                except ValueError:
+                    continue
+            raise ValueError("期货行情数据源暂时不可用，请稍后重试")
+
+        def _tushare_spot() -> Any:
+            """Tushare fut_daily 当日作为期货行情备用。需 TUSHARE_TOKEN。"""
+            pro = _get_tushare_pro()
+            if pro is None:
+                raise ValueError("TUSHARE_TOKEN not set")
+            today = date.today().strftime("%Y%m%d")
+            contracts_to_try: list[str] = []
+            if symbol and re.search(r"\d", str(symbol)):
+                contracts_to_try = [str(symbol).strip()]
+            else:
+                for exch in ("cffex", "shfe", "dce"):
+                    try:
+                        main = self.ak.match_main_contract(symbol=exch)
+                        if main and isinstance(main, str):
+                            first = (main.split(",")[0] if "," in main else main).strip()
+                            if first:
+                                contracts_to_try.append(first)
+                                break
+                    except Exception:
+                        pass
+                if not contracts_to_try:
+                    yy = datetime.now().strftime("%y")
+                    contracts_to_try = [f"IF{yy}06", f"rb{yy}05", f"au{yy}06", f"cu{yy}06"]
+            for sym in contracts_to_try:
+                try:
+                    ts_code = _futures_symbol_to_ts_code(sym)
+                    df = pro.fut_daily(ts_code=ts_code, start_date=today, end_date=today)
+                    if df is not None and not (hasattr(df, "empty") and df.empty):
+                        df = df.rename(columns={"trade_date": "日期", "vol": "成交量"})
+                        return df
+                except Exception:
+                    continue
+            raise ValueError("期货行情数据源暂时不可用，请稍后重试")
+
+        return self._try_sources([("akshare", _akshare_spot), ("tushare", _tushare_spot)])
 
     # 期货交易所 -> Tushare ts_code 后缀
     _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
@@ -351,31 +463,7 @@ class AkshareBackend:
 
     def _get_tushare_pro(self) -> Any:
         """返回 tushare pro_api 实例，未设置 TUSHARE_TOKEN 时返回 None。"""
-        token = os.environ.get("TUSHARE_TOKEN") or os.environ.get("TUSHARE_API_KEY", "").strip()
-        if not token:
-            return None
-        try:
-            import tushare as ts  # type: ignore
-            return ts.pro_api(token)
-        except ImportError:
-            return None
-
-    # Tushare 交易所 ts_code 后缀
-    _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
-        "SHFE": "SHF", "DCE": "DCE", "CZCE": "CZCE",
-        "CFFEX": "CFFEX", "INE": "INE", "GFEX": "GFEX",
-    }
-
-    def _get_tushare_pro(self) -> Any:
-        """获取 Tushare Pro API，需设置 TUSHARE_TOKEN 环境变量。未捐赠账号有频次限制。"""
-        token = os.environ.get("TUSHARE_TOKEN", "").strip()
-        if not token:
-            return None
-        try:
-            import tushare as ts  # type: ignore
-            return ts.pro_api(token)
-        except ImportError:
-            return None
+        return _get_tushare_pro()
 
     # 期货合约代码 -> 交易所 (get_futures_daily 用)
     _FUTURES_SYMBOL_TO_MARKET: dict[str, str] = {

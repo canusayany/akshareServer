@@ -1063,14 +1063,16 @@
 - 测试报告会先尝试 SSL，若检测到证书/连接类错误会自动重试禁用 SSL。
 
 ### 数据源回退
-部分接口已实现多数据源回退，主源失败时自动尝试备选：
+部分接口已实现多数据源回退，主源失败时自动尝试备选。需在 `.env` 中设置 `TUSHARE_TOKEN` 以启用 Tushare 备用：
 | 接口 | 主源 | 备选 |
 |------|------|------|
-| stock_zh_a_spot | 东方财富 | 新浪 |
+| stock_zh_a_spot | 东方财富 / 新浪 | Tushare daily |
+| stock_zh_a_hist | AKShare | Tushare daily |
+| futures_zh_spot | 新浪 / match_main_contract | Tushare fut_daily |
+| futures_zh_hist | 新浪/东方财富 | 互相回退、Tushare fut_daily |
 | stock_board_industry | 东方财富 | 同花顺 |
 | stock_board_concept | 东方财富 | 同花顺 |
 | fund_etf_market | 东方财富 | 同花顺 |
-| futures_zh_hist | 新浪/东方财富 | 互相回退 |
 | bond_zh_hs_market | 新浪 | 少页数重试 |
 
 ### 雅虎数据源
