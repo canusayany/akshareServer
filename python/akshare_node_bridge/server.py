@@ -28,31 +28,29 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
     server_version = "AkshareNodeHTTP/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
-            self._write_json(
-                HTTPStatus.OK,
-                {"ok": True, "host": HOST, "port": PORT},
-            )
-            return
-        if self.path == "/tools":
-            self._write_json(
-                HTTPStatus.OK,
-                {"ok": True, "tools": sorted(SUPPORTED_INTERFACES)},
-            )
-            return
-        self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+        try:
+            if self.path == "/health":
+                self._write_json_safe(HTTPStatus.OK, {"ok": True, "host": HOST, "port": PORT})
+                return
+            if self.path == "/tools":
+                self._write_json_safe(HTTPStatus.OK, {"ok": True, "tools": sorted(SUPPORTED_INTERFACES)})
+                return
+            self._write_json_safe(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+        except Exception:
+            self._safe_write_error()
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/invoke":
-            self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+            self._write_json_safe(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
             return
 
         try:
             payload = self._read_json()
-            interface_name = payload["interface"]
+            interface_name = payload.get("interface")
+            if not interface_name:
+                self._write_json_safe(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "missing interface"})
+                return
             params = payload.get("params", {})
-            # If the caller requests no SSL verification, apply the patch now
-            # (idempotent – safe to call multiple times).
             if not bool(payload.get("verify_ssl", True)):
                 _patch_ssl_if_needed(force=True)
             service = build_service(
@@ -60,23 +58,41 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
                 db_path=payload.get("db_path"),
             )
             result = service.handle(interface_name=interface_name, params=params)
+            self._write_json_safe(HTTPStatus.OK, result)
         except Exception as exc:
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": {
-                        "type": exc.__class__.__name__,
-                        "message": str(exc),
+            try:
+                self._write_json_safe(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": exc.__class__.__name__,
+                            "message": str(exc),
+                        },
                     },
-                },
-            )
-            return
-
-        self._write_json(HTTPStatus.OK, result)
+                )
+            except Exception:
+                self._safe_write_error()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return
+
+    def _write_json_safe(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        """写入 JSON 响应，捕获所有异常避免服务崩溃。"""
+        try:
+            self._write_json(status, payload)
+        except Exception:
+            pass
+
+    def _safe_write_error(self) -> None:
+        """兜底：尝试发送 500 错误，失败则静默。"""
+        try:
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "error": "internal error"},
+            )
+        except Exception:
+            pass
 
     def _read_json(self) -> dict[str, Any]:
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -87,11 +103,15 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
-        self.send_response(status.value)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status.value)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            # 客户端断开或网络异常时静默忽略，避免堆栈输出导致服务看似崩溃
+            pass
 
 
 def main() -> int:

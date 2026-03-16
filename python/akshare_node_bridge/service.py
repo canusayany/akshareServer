@@ -7,8 +7,8 @@ from typing import Any
 
 from .backend import create_backend
 from .cache import SqliteCache
-from .calendar import is_same_day
-from .limiter import reduce_rows_evenly
+from .calendar import is_same_day, split_date_range_by_month
+from .limiter import extract_row_datetime, reduce_rows_evenly
 
 
 SUPPORTED_INTERFACES = {
@@ -33,6 +33,23 @@ SUPPORTED_INTERFACES = {
     "stock_board_concept",
 }
 
+# 支持按日期分片、差额补齐的接口（须有 start_date、end_date 参数）
+INTERFACES_WITH_DATE_RANGE = frozenset({
+    "stock_zh_a_hist",
+    "futures_zh_hist",
+    "fund_etf_market",
+    "stock_board_industry",
+    "stock_board_concept",
+})
+
+
+def _sort_rows_by_datetime(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按时间字段对行排序，无时间字段的排在末尾。"""
+    def key_fn(row: dict[str, Any]):
+        dt = extract_row_datetime(row)
+        return (0, dt) if dt else (1, None)
+    return sorted(rows, key=key_fn)
+
 
 class BridgeService:
     def __init__(self, db_path: str | Path, max_bytes: int = 2000, test_mode: bool = False) -> None:
@@ -45,6 +62,19 @@ class BridgeService:
             raise ValueError(f"Unsupported interface: {interface_name}")
 
         normalized_params = self._normalize_params(params or {})
+        # 支持日期分片的接口：优先查分片缓存，缺失部分再调接口补齐
+        use_incremental = (
+            interface_name in INTERFACES_WITH_DATE_RANGE
+            and normalized_params.get("start_date")
+            and normalized_params.get("end_date")
+        )
+        # fund_etf_market / stock_board_* 需 mode=hist 才使用 start_date/end_date
+        if use_incremental and interface_name in ("fund_etf_market", "stock_board_industry", "stock_board_concept"):
+            use_incremental = normalized_params.get("mode") == "hist"
+        if use_incremental:
+            return self._handle_with_incremental_cache(interface_name, normalized_params)
+
+        # 其余接口：全量缓存
         request_key = self._build_request_key(interface_name, normalized_params)
         cached = self.cache.get(request_key)
         if cached is not None:
@@ -55,6 +85,43 @@ class BridgeService:
         self.cache.set(interface_name, request_key, {"rows": backend_result.rows})
         limited = self._limit_rows(interface_name, normalized_params, backend_result.rows)
         return self._success_response(interface_name, normalized_params, limited, cache_hit=False)
+
+    def _handle_with_incremental_cache(
+        self, interface_name: str, normalized_params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """按日期分片查询缓存，缺失部分通过接口获取并写入缓存。"""
+        slices = split_date_range_by_month(
+            normalized_params.get("start_date"),
+            normalized_params.get("end_date"),
+        )
+        if not slices:
+            backend_result = self.backend.fetch(interface_name, normalized_params)
+            limited = self._limit_rows(interface_name, normalized_params, backend_result.rows)
+            return self._success_response(interface_name, normalized_params, limited, cache_hit=False)
+
+        all_rows: list[dict[str, Any]] = []
+        missing_slices: list[tuple[str, str]] = []
+
+        for start_str, end_str in slices:
+            slice_params = {**normalized_params, "start_date": start_str, "end_date": end_str}
+            slice_key = self._build_request_key(interface_name, slice_params)
+            cached = self.cache.get(slice_key)
+            if cached is not None:
+                all_rows.extend(cached.payload["rows"])
+            else:
+                missing_slices.append((start_str, end_str))
+
+        for start_str, end_str in missing_slices:
+            slice_params = {**normalized_params, "start_date": start_str, "end_date": end_str}
+            slice_key = self._build_request_key(interface_name, slice_params)
+            backend_result = self.backend.fetch(interface_name, slice_params)
+            self.cache.set(interface_name, slice_key, {"rows": backend_result.rows})
+            all_rows.extend(backend_result.rows)
+
+        merged = _sort_rows_by_datetime(all_rows)
+        limited = self._limit_rows(interface_name, normalized_params, merged)
+        cache_hit = len(missing_slices) == 0
+        return self._success_response(interface_name, normalized_params, limited, cache_hit=cache_hit)
 
     def _normalize_params(self, params: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in sorted(params.items(), key=lambda item: item[0]) if value is not None}

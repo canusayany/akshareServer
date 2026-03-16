@@ -304,23 +304,44 @@ class AkshareBackend:
         symbol = params.get("symbol")
         market = params.get("market", "CF")
         adjust = params.get("adjust", "0")
+
+        def _safe_spot(sym: str, mkt: str = "CF") -> Any:
+            """调用 futures_zh_spot，捕获 AKShare 解析异常（如新浪返回格式异常）。"""
+            try:
+                return self.ak.futures_zh_spot(symbol=sym, market=mkt, adjust=adjust)
+            except (IndexError, KeyError) as e:
+                raise ValueError(
+                    f"期货行情数据源返回异常 ({e.__class__.__name__})，请稍后重试"
+                ) from e
+
         # symbol 为合约代码(含数字如 RB2505)用 futures_zh_spot；为品种名(如 PTA)用 futures_zh_realtime
         if symbol:
             import re
 
             if re.search(r"\d", str(symbol)):  # 含数字视为合约代码
-                return self.ak.futures_zh_spot(symbol=symbol, market=market, adjust=adjust)
-            return self.ak.futures_zh_realtime(symbol=symbol)
+                return _safe_spot(symbol, market)
+            try:
+                return self.ak.futures_zh_realtime(symbol=symbol)
+            except (IndexError, KeyError) as e:
+                raise ValueError(
+                    f"期货行情数据源返回异常 ({e.__class__.__name__})，请稍后重试"
+                ) from e
         # 无 symbol 时从 match_main_contract 获取主力合约
         try:
             main = self.ak.match_main_contract(symbol="shfe")
             if main and isinstance(main, str):
                 first = (main.split(",")[0] if "," in main else main).strip()
                 if first:
-                    return self.ak.futures_zh_spot(symbol=first, market="CF", adjust=adjust)
+                    return _safe_spot(first, "CF")
         except Exception:
             pass
-        return self.ak.futures_zh_spot(symbol="rb2505", market="CF", adjust=adjust)
+        # 备选合约：依次尝试，避免单一合约数据源异常导致全部失败
+        for fallback in ("rb2505", "au2506", "cu2504"):
+            try:
+                return _safe_spot(fallback, "CF")
+            except ValueError:
+                continue
+        raise ValueError("期货行情数据源暂时不可用，请稍后重试")
 
     # 期货交易所 -> Tushare ts_code 后缀
     _TUSHARE_EXCHANGE_SUFFIX: dict[str, str] = {
