@@ -45,12 +45,31 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            payload = self._read_json()
+            payload = self._read_json() or {}
+            if not isinstance(payload, dict):
+                self._write_json_safe(HTTPStatus.BAD_REQUEST, {
+                    "ok": False,
+                    "error": {"type": "BadRequest", "message": "请求体须为 JSON 对象"}
+                })
+                return
             interface_name = payload.get("interface")
             if not interface_name:
-                self._write_json_safe(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "missing interface"})
+                self._write_json_safe(HTTPStatus.BAD_REQUEST, {
+                    "ok": False,
+                    "error": {"type": "BadRequest", "message": "缺少 interface 字段，请指定接口名如 stock_zh_a_spot"}
+                })
                 return
-            params = payload.get("params", {})
+            interface_name = str(interface_name).strip() if interface_name is not None else ""
+            if not interface_name:
+                self._write_json_safe(HTTPStatus.BAD_REQUEST, {
+                    "ok": False,
+                    "error": {"type": "BadRequest", "message": "interface 须为非空字符串"}
+                })
+                return
+            params = payload.get("params")
+            if params is not None and not isinstance(params, dict):
+                params = {}
+            params = params or {}
             if not bool(payload.get("verify_ssl", True)):
                 _patch_ssl_if_needed(force=True)
             service = build_service(
@@ -61,13 +80,15 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
             self._write_json_safe(HTTPStatus.OK, result)
         except Exception as exc:
             try:
+                err_msg = str(exc)
                 self._write_json_safe(
                     HTTPStatus.BAD_REQUEST,
                     {
                         "ok": False,
                         "error": {
                             "type": exc.__class__.__name__,
-                            "message": str(exc),
+                            "message": err_msg,
+                            "hint": "请检查 params 是否包含必填参数，格式是否正确" if "需要参数" in err_msg else None,
                         },
                     },
                 )

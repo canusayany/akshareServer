@@ -14,6 +14,33 @@
 { "interface": "接口名", "params": { ... }, "verify_ssl": false }
 ```
 
+## LLM 调用约定与参数兼容
+
+接口面向 LLM 调用，对参数做了防御与兼容处理：
+
+- **params**：可为 `null` 或非对象，服务端会转为 `{}`
+- **参数兼容**：`code`/`stock`/`ts_code` → `symbol`；`start`/`begin` → `start_date`；`end`/`until` → `end_date`
+- **类型规范化**：`symbol` 等数值会自动转为字符串；日期支持 `YYYY-MM-DD`、`YYYYMMDD` 等格式
+
+## 错误返回格式
+
+失败时返回 `ok: false`，`error` 为对象：
+
+```json
+{
+  "ok": false,
+  "error": {
+    "type": "ValueError",
+    "message": "接口 stock_zh_a_hist 需要参数: symbol（股票代码，6位如 000001、600519）",
+    "hint": "请检查 params 是否包含必填参数，格式是否正确"
+  }
+}
+```
+
+- `type`：异常类型
+- `message`：面向 LLM 的错误说明
+- `hint`：参数校验失败时提示检查 params
+
 ## 返回值通用结构（成功时）
 
 ```json

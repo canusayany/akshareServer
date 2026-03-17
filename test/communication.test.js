@@ -263,6 +263,74 @@ test("stock_board_concept — no params returns concept rows", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 期权
+// ---------------------------------------------------------------------------
+
+test("option_finance_board — returns option board rows", async () => {
+  const c = testClient({ dbPath: tmpDb("opt-fin") });
+  const r = await c.option_finance_board({ symbol: "华夏上证50ETF期权", end_month: "2503" });
+  assertShape(r, "option_finance_board");
+  assert.ok(r.rows.length > 0);
+});
+
+test("option_current_em — no params returns option spot rows", async () => {
+  const c = testClient({ dbPath: tmpDb("opt-em") });
+  const r = await c.option_current_em();
+  assertShape(r, "option_current_em");
+  assert.ok(r.rows.length > 0);
+});
+
+test("option_sse_daily_sina — symbol param returns daily rows", async () => {
+  const c = testClient({ dbPath: tmpDb("opt-sse") });
+  const r = await c.option_sse_daily_sina({ symbol: "10005050C2503M" });
+  assertShape(r, "option_sse_daily_sina");
+  assert.ok(r.rows.length > 0);
+});
+
+test("option_commodity_hist — returns commodity option rows", async () => {
+  const c = testClient({ dbPath: tmpDb("opt-comm") });
+  const r = await c.option_commodity_hist({ symbol: "m2503-C-4000", exchange: "dce", trade_date: "2024-01-02" });
+  assertShape(r, "option_commodity_hist");
+  assert.ok(r.rows.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// 指数、财务、业绩
+// ---------------------------------------------------------------------------
+
+test("stock_index_zh_hist — returns index daily rows", async () => {
+  const c = testClient({ dbPath: tmpDb("index-hist") });
+  const r = await c.stock_index_zh_hist({
+    symbol: "000001",
+    start_date: "2024-01-01",
+    end_date: "2024-01-31",
+  });
+  assertShape(r, "stock_index_zh_hist");
+  assert.ok(r.rows.length > 0);
+});
+
+test("stock_financial_abstract — symbol param returns financial rows", async () => {
+  const c = testClient({ dbPath: tmpDb("financial") });
+  const r = await c.stock_financial_abstract({ symbol: "000001" });
+  assertShape(r, "stock_financial_abstract");
+  assert.ok(r.rows.length > 0);
+});
+
+test("stock_yjbb_em — date param returns performance report rows", async () => {
+  const c = testClient({ dbPath: tmpDb("yjbb") });
+  const r = await c.stock_yjbb_em({ date: "20241231" });
+  assertShape(r, "stock_yjbb_em");
+  assert.ok(r.rows.length > 0);
+});
+
+test("stock_yjyg_em — date param returns performance forecast rows", async () => {
+  const c = testClient({ dbPath: tmpDb("yjyg") });
+  const r = await c.stock_yjyg_em({ date: "20241231" });
+  assertShape(r, "stock_yjyg_em");
+  assert.ok(r.rows.length > 0);
+});
+
+// ---------------------------------------------------------------------------
 // 通用行为
 // ---------------------------------------------------------------------------
 
@@ -314,6 +382,22 @@ test("AKSHARE_NO_SSL_VERIFY=1 — env var forwarded; patch does not crash subpro
   const r = await c.stock_zh_a_spot();
   assertShape(r, "stock_zh_a_spot");
   assert.ok(r.rows.length > 0);
+});
+
+test("non-trading day — single-day query returns empty with message", async () => {
+  const c = testClient({ dbPath: tmpDb("non-trading") });
+  const r = await c.stock_zh_a_hist({
+    symbol: "000001",
+    period: "daily",
+    start_date: "2024-01-06",
+    end_date: "2024-01-06",
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.interface, "stock_zh_a_hist");
+  assert.equal(r.message, "非交易日");
+  assert.ok(Array.isArray(r.rows));
+  assert.equal(r.rows.length, 0);
+  assert.equal(r.returned_rows, 0);
 });
 
 test("payload limit — rows are sampled evenly when byte budget is tight", async () => {

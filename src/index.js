@@ -33,8 +33,18 @@ import path from "node:path";
  * Interface names grouped by business type for dependency injection.
  */
 export const INTERFACE_GROUPS = {
-  stock: ["stock_zh_a_spot", "stock_zh_a_hist", "stock_intraday_em", "stock_bid_ask_em"],
+  stock: [
+    "stock_zh_a_spot",
+    "stock_zh_a_hist",
+    "stock_intraday_em",
+    "stock_bid_ask_em",
+    "stock_index_zh_hist",
+    "stock_financial_abstract",
+    "stock_yjbb_em",
+    "stock_yjyg_em",
+  ],
   futures: ["futures_zh_spot", "futures_zh_hist", "match_main_contract", "futures_basis"],
+  option: ["option_finance_board", "option_current_em", "option_sse_daily_sina", "option_commodity_hist"],
   fund: ["fund_meta", "fund_etf_market", "fund_open_info"],
   macro: ["macro_china_all"],
   commodity: ["commodity_basis", "spot_sge"],
@@ -317,4 +327,68 @@ export class AkshareNodeClient {
    * @returns {Promise<BridgeResponse>} Concept board rows.
    */
   async stock_board_concept(params = {}) { return this.invoke("stock_board_concept", params); }
+
+  /**
+   * Get financial options board (华夏上证50ETF期权、沪深300ETF期权等).
+   *
+   * @param {QueryParams} [params={}] Supports `symbol`, `end_month` (e.g. 2503).
+   * @returns {Promise<BridgeResponse>} Option board rows.
+   */
+  async option_finance_board(params = {}) { return this.invoke("option_finance_board", params); }
+
+  /**
+   * Get options current day market (East Money).
+   *
+   * @param {QueryParams} [params={}] No params, returns all.
+   * @returns {Promise<BridgeResponse>} Option spot rows.
+   */
+  async option_current_em(params = {}) { return this.invoke("option_current_em", params); }
+
+  /**
+   * Get SSE option daily K-line.
+   *
+   * @param {QueryParams} params Supports `symbol` (contract code).
+   * @returns {Promise<BridgeResponse>} Option daily rows.
+   */
+  async option_sse_daily_sina(params) { return this.invoke("option_sse_daily_sina", params); }
+
+  /**
+   * Get commodity option history (DCE/SHFE/CZCE).
+   *
+   * @param {QueryParams} params Supports `symbol`, `exchange` (dce/shfe/czce), `trade_date`.
+   * @returns {Promise<BridgeResponse>} Commodity option rows.
+   */
+  async option_commodity_hist(params) { return this.invoke("option_commodity_hist", params); }
+
+  /**
+   * Get stock index daily K-line (e.g. 沪深300, 中证500).
+   *
+   * @param {QueryParams} [params={}] Supports `symbol`, `start_date`, `end_date`.
+   * @returns {Promise<BridgeResponse>} Index daily rows.
+   */
+  async stock_index_zh_hist(params = {}) { return this.invoke("stock_index_zh_hist", params); }
+
+  /**
+   * Get stock financial abstract.
+   *
+   * @param {QueryParams} params Supports `symbol`, `year`.
+   * @returns {Promise<BridgeResponse>} Financial rows.
+   */
+  async stock_financial_abstract(params) { return this.invoke("stock_financial_abstract", params); }
+
+  /**
+   * Get performance report (业绩快报).
+   *
+   * @param {QueryParams} [params={}] Supports `date` (e.g. 20241231).
+   * @returns {Promise<BridgeResponse>} Performance report rows.
+   */
+  async stock_yjbb_em(params = {}) { return this.invoke("stock_yjbb_em", params); }
+
+  /**
+   * Get performance forecast (业绩预告).
+   *
+   * @param {QueryParams} [params={}] Supports `date` (e.g. 20241231).
+   * @returns {Promise<BridgeResponse>} Performance forecast rows.
+   */
+  async stock_yjyg_em(params = {}) { return this.invoke("stock_yjyg_em", params); }
 }

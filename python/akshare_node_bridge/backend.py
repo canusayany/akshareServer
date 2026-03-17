@@ -161,6 +161,33 @@ def _tag_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"dataset": dataset, **row} for row in rows]
 
 
+# A股/指数等接口：中文列名转英文，减少 token，便于 LLM 解析
+_ROW_KEY_MAP: dict[str, dict[str, str]] = {
+    "stock_zh_a_spot": {"代码": "code", "名称": "name", "最新价": "price", "涨跌幅": "pct_chg", "成交量": "volume"},
+    "stock_zh_a_hist": {"日期": "date", "代码": "code", "开盘": "open", "收盘": "close", "最高": "high", "最低": "low", "成交量": "volume"},
+    "stock_index_zh_hist": {"date": "date", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
+    "futures_zh_spot": {"日期": "date", "symbol": "symbol", "trade": "price", "vol": "volume"},
+    "futures_zh_hist": {"date": "date", "symbol": "symbol", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
+    "option_finance_board": {"合约交易代码": "code", "当前价": "price", "涨跌幅": "pct_chg", "行权价": "strike"},
+    "option_current_em": {"合约代码": "code", "最新价": "price", "涨跌幅": "pct_chg"},
+    "option_sse_daily_sina": {"date": "date", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"},
+}
+
+
+def _compact_row_keys(rows: list[dict[str, Any]], interface_name: str) -> list[dict[str, Any]]:
+    """对指定接口精简字段名，减少数据量。"""
+    m = _ROW_KEY_MAP.get(interface_name)
+    if not m or not rows:
+        return rows
+    result = []
+    for row in rows:
+        new_row = {}
+        for k, v in row.items():
+            new_row[m.get(k, k)] = v
+        result.append(new_row)
+    return result
+
+
 @dataclass
 class BackendResult:
     rows: list[dict[str, Any]]
@@ -209,6 +236,27 @@ class StubBackend:
                 {"dataset": "macro_china_new_financial_credit", "date": "2024-03", "value": 30900},
                 {"dataset": "macro_china_fx_gold", "date": "2024-03", "value": 32457},
             ]
+        if interface_name == "stock_index_zh_hist":
+            sym = str(params.get("symbol", "000001")).replace("sh.", "").replace("sz.", "")[:6]
+            day = str(params.get("start_date", "2024-01-02"))[:10]
+            return [
+                {"date": day, "open": 3000, "high": 3010, "low": 2990, "close": 3005, "volume": 1000000},
+            ]
+        if interface_name == "stock_financial_abstract":
+            sym = params.get("symbol", "000001")
+            return [{"code": str(sym), "statDate": "2024-03-31", "roeAvg": 10.5, "netProfit": 1000}]
+        if interface_name == "stock_yjbb_em":
+            return [{"code": "000001", "name": "平安银行", "eps": 1.2, "revenue": 10000}]
+        if interface_name == "stock_yjyg_em":
+            return [{"code": "000001", "name": "平安银行", "type": "预增", "profit_min": 0.1}]
+        if interface_name == "option_finance_board":
+            return [{"code": "10005050C2503M", "price": 0.05, "pct_chg": 2.5, "strike": 2.5}]
+        if interface_name == "option_current_em":
+            return [{"code": "10005050C2503M", "price": 0.05, "pct_chg": 2.5}]
+        if interface_name == "option_sse_daily_sina":
+            return [{"date": "2024-01-02", "open": 0.04, "high": 0.05, "low": 0.04, "close": 0.05, "volume": 1000}]
+        if interface_name == "option_commodity_hist":
+            return [{"date": "2024-01-02", "symbol": "m2503-C-4000", "close": 0.05, "volume": 500}]
         return [{"interface": interface_name, "params": params}]
 
 
@@ -227,6 +275,77 @@ def _stock_symbol_to_ts_code(symbol: str) -> str:
     return f"{s}.SH" if s.startswith("6") else f"{s}.SZ"
 
 
+def _stock_symbol_to_bs_code(symbol: str) -> str:
+    """A股6位代码转 baostock code：600xxx->sh.600xxx，0/3xxx->sz.0xxxxx"""
+    s = str(symbol).zfill(6)
+    return f"sh.{s}" if s.startswith("6") else f"sz.{s}"
+
+
+def _index_symbol_to_bs_code(symbol: str) -> str:
+    """指数代码转 baostock：000001->sh.000001, 399001->sz.399001"""
+    s = str(symbol).strip().lower()
+    if s.startswith(("sh", "sz")):
+        return s if "." in s else f"{s[:2]}.{s[2:]}"
+    s = s.zfill(6)
+    return f"sh.{s}" if s.startswith("0") and len(s) == 6 else f"sz.{s}"
+
+
+def _get_baostock_stock_daily(symbol: str, start_date: str, end_date: str):
+    """Baostock 获取 A 股日线，返回 DataFrame。"""
+    try:
+        import baostock as bs  # type: ignore
+        import pandas as pd  # type: ignore
+        lg = bs.login()
+        if lg.error_code != "0":
+            raise ValueError(f"Baostock login failed: {lg.error_msg}")
+        code = _stock_symbol_to_bs_code(symbol)
+        rs = bs.query_history_k_data_plus(
+            code, "date,open,high,low,close,volume,amount",
+            start_date=start_date, end_date=end_date, frequency="d", adjustflag="3",
+        )
+        bs.logout()
+        if rs.error_code != "0":
+            raise ValueError(f"Baostock query failed: {rs.error_msg}")
+        rows = []
+        while rs.next():
+            rows.append(rs.get_row_data())
+        if not rows:
+            raise ValueError("Baostock returned empty")
+        df = pd.DataFrame(rows, columns=rs.fields)
+        df = df.rename(columns={"date": "日期", "open": "开盘", "high": "最高", "low": "最低", "close": "收盘", "volume": "成交量"})
+        return df
+    except ImportError:
+        raise ValueError("baostock not installed")
+
+
+def _get_baostock_index_daily(symbol: str, start_date: str, end_date: str):
+    """Baostock 获取指数日线。"""
+    try:
+        import baostock as bs  # type: ignore
+        import pandas as pd  # type: ignore
+        lg = bs.login()
+        if lg.error_code != "0":
+            raise ValueError(f"Baostock login failed: {lg.error_msg}")
+        code = _index_symbol_to_bs_code(symbol)
+        rs = bs.query_history_k_data_plus(
+            code, "date,open,high,low,close,volume",
+            start_date=start_date, end_date=end_date, frequency="d", adjustflag="3",
+        )
+        bs.logout()
+        if rs.error_code != "0":
+            raise ValueError(f"Baostock query failed: {rs.error_msg}")
+        rows = []
+        while rs.next():
+            rows.append(rs.get_row_data())
+        if not rows:
+            raise ValueError("Baostock returned empty")
+        df = pd.DataFrame(rows, columns=rs.fields)
+        df = df.rename(columns={"date": "date", "volume": "volume"})
+        return df
+    except ImportError:
+        raise ValueError("baostock not installed")
+
+
 def _get_tushare_pro():  # noqa: ANN202
     """获取 Tushare Pro API 实例，需设置 TUSHARE_TOKEN 环境变量。未捐赠账号有调用限制。"""
     token = os.environ.get("TUSHARE_TOKEN", "").strip()
@@ -237,6 +356,111 @@ def _get_tushare_pro():  # noqa: ANN202
         return ts.pro_api(token)
     except ImportError:
         return None
+
+
+# 集思录登录 cookie 缓存（25 分钟内复用）
+_jsl_cookie_cache: str | None = None
+_jsl_cookie_cache_time: datetime | None = None
+
+
+def _login_jisilu_with_aes() -> str | None:
+    """
+    使用 JISILU_USERNAME_AES、JISILU_PASSWORD_AES 登录集思录获取 cookie。
+    参考 QuantDaemon：凭证为浏览器登录时前端 AES 加密的 hex，直接 POST 到登录 API，无需解密。
+    获取方式：F12 → Network → 登录时抓 login_process 请求的 Form Data 中 user_name、password。
+    """
+    username_aes = os.environ.get("JISILU_USERNAME_AES", "").strip()
+    password_aes = os.environ.get("JISILU_PASSWORD_AES", "").strip()
+    if username_aes.startswith(("'", '"')) and username_aes.endswith(("'", '"')):
+        username_aes = username_aes[1:-1].strip()
+    if password_aes.startswith(("'", '"')) and password_aes.endswith(("'", '"')):
+        password_aes = password_aes[1:-1].strip()
+    if not username_aes or not password_aes:
+        return None
+    try:
+        import requests  # noqa: PLC0415
+        session = requests.Session()
+        if os.environ.get("AKSHARE_NO_SSL_VERIFY", "").lower() in {"1", "true", "yes", "on"}:
+            session.verify = False
+        session.get("https://www.jisilu.cn/", timeout=15)
+        session.get("https://www.jisilu.cn/account/login/", timeout=15)
+        login_data = {
+            "return_url": "https://www.jisilu.cn/",
+            "user_name": username_aes,
+            "password": password_aes,
+            "auto_login": "1",
+            "aes": "1",
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://www.jisilu.cn",
+            "Referer": "https://www.jisilu.cn/account/login/",
+        }
+        resp = session.post(
+            "https://www.jisilu.cn/account/ajax/login_process/",
+            data=login_data,
+            headers=headers,
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            return None
+        result = resp.json()
+        if result.get("errno") not in (0, 1) or result.get("err"):
+            return None
+        cookie_str = "; ".join(f"{c.name}={c.value}" for c in session.cookies)
+        return cookie_str if cookie_str else None
+    except Exception:
+        return None
+
+
+def _decrypt_jisilu_aes(ciphertext: str, key_hex: str) -> str | None:
+    """AES-256-GCM 解密 (iv:cipher:tag 格式)，与 chat-ai-top crypto 兼容。"""
+    if not ciphertext or not key_hex or len(key_hex) != 64:
+        return None
+    parts = ciphertext.strip().split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: PLC0415
+        key = bytes.fromhex(key_hex)
+        if len(key) != 32:
+            return None
+        iv = bytes.fromhex(parts[0])
+        encrypted = bytes.fromhex(parts[1])
+        tag = bytes.fromhex(parts[2])
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(iv, encrypted + tag, None).decode("utf-8")
+    except Exception:
+        return None
+
+
+def _get_jisilu_cookie() -> str | None:
+    """
+    获取集思录 Cookie，用于 bond_cb_jsl 全量数据。
+    优先级：JISILU_COOKIE > JISILU_COOKIE_AES(解密) > JISILU_USERNAME_AES+JISILU_PASSWORD_AES(登录，参考 QuantDaemon)。
+    """
+    global _jsl_cookie_cache, _jsl_cookie_cache_time
+    plain = os.environ.get("JISILU_COOKIE", "").strip()
+    if plain:
+        return plain
+    aes_val = os.environ.get("JISILU_COOKIE_AES", "").strip()
+    if aes_val and ":" in aes_val:
+        key_hex = os.environ.get("JISILU_DECRYPT_KEY") or os.environ.get("ENCRYPTION_KEY", "").strip()
+        if key_hex and len(key_hex) == 64:
+            dec = _decrypt_jisilu_aes(aes_val, key_hex)
+            if dec:
+                return dec
+    if _jsl_cookie_cache and _jsl_cookie_cache_time:
+        from datetime import timedelta
+        if datetime.now() - _jsl_cookie_cache_time < timedelta(minutes=25):
+            return _jsl_cookie_cache
+    cookie = _login_jisilu_with_aes()
+    if cookie:
+        _jsl_cookie_cache = cookie
+        _jsl_cookie_cache_time = datetime.now()
+    return cookie
 
 
 class AkshareBackend:
@@ -301,7 +525,17 @@ class AkshareBackend:
             df["涨跌幅"] = df.get("pct_chg")
             return df
 
-        return self._try_sources([("em", _em), ("sina", _sina), ("tushare", _tushare)])
+        def _baostock() -> Any:
+            """Baostock 作为 A 股行情备用：当日日线作为最新价。"""
+            today = date.today().strftime("%Y-%m-%d")
+            if symbol:
+                df = _get_baostock_stock_daily(symbol, today, today)
+                df["代码"] = str(symbol).zfill(6)
+                df["最新价"] = df["收盘"].astype(float)
+                return df
+            raise ValueError("Baostock spot 需指定 symbol")
+
+        return self._try_sources([("em", _em), ("sina", _sina), ("tushare", _tushare), ("baostock", _baostock)])
 
     def _fetch_stock_zh_a_hist(self, params: dict[str, Any]) -> Any:
         symbol = params["symbol"]
@@ -346,13 +580,126 @@ class AkshareBackend:
             })
             return df
 
-        return self._try_sources([("akshare", _akshare), ("tushare", _tushare)])
+        def _baostock() -> Any:
+            """Baostock 作为 A 股日线备用。"""
+            s = str(params.get("start_date") or "").replace("-", "")[:8]
+            e = str(params.get("end_date") or "").replace("-", "")[:8]
+            if not s or not e:
+                from datetime import timedelta
+                today = date.today()
+                e = today.strftime("%Y%m%d")
+                s = (today - timedelta(days=30)).strftime("%Y%m%d")
+            start_str = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+            end_str = f"{e[:4]}-{e[4:6]}-{e[6:8]}"
+            df = _get_baostock_stock_daily(symbol, start_str, end_str)
+            return df
+
+        return self._try_sources([("akshare", _akshare), ("tushare", _tushare), ("baostock", _baostock)])
 
     def _fetch_stock_intraday_em(self, params: dict[str, Any]) -> Any:
         return self.ak.stock_intraday_em(symbol=params["symbol"])
 
     def _fetch_stock_bid_ask_em(self, params: dict[str, Any]) -> Any:
         return self.ak.stock_bid_ask_em(symbol=params["symbol"])
+
+    def _fetch_stock_index_zh_hist(self, params: dict[str, Any]) -> Any:
+        """指数日线：AKShare 主，Baostock 备用。symbol 如 sh000001/sz399001/000001。"""
+        symbol = params.get("symbol", "sh000001")
+        s = str(params.get("start_date") or "").replace("-", "")[:8]
+        e = str(params.get("end_date") or "").replace("-", "")[:8]
+        if not s or not e:
+            from datetime import timedelta
+            today = date.today()
+            e = today.strftime("%Y%m%d")
+            s = (today - timedelta(days=30)).strftime("%Y%m%d")
+        sym_clean = str(symbol).replace("sh.", "").replace("sz.", "").strip().lower()
+        if not sym_clean or not sym_clean[0].isdigit():
+            sym_clean = "000001"
+        akshare_sym = f"sh{sym_clean}" if sym_clean.startswith("0") and len(sym_clean) == 6 else f"sz{sym_clean}"
+
+        def _akshare() -> Any:
+            df = self.ak.stock_zh_index_daily(symbol=akshare_sym)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("AKShare index returned empty")
+            start_str = str(params.get("start_date") or "")[:10]
+            end_str = str(params.get("end_date") or "")[:10]
+            if start_str:
+                df = df[df["date"].astype(str) >= start_str]
+            if end_str:
+                df = df[df["date"].astype(str) <= end_str]
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("AKShare index returned empty after filter")
+            return df
+
+        def _baostock() -> Any:
+            start_str = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+            end_str = f"{e[:4]}-{e[4:6]}-{e[6:8]}"
+            return _get_baostock_index_daily(sym_clean, start_str, end_str)
+
+        return self._try_sources([("akshare", _akshare), ("baostock", _baostock)])
+
+    def _fetch_stock_financial_abstract(self, params: dict[str, Any]) -> Any:
+        """财务摘要：AKShare 主，Baostock 备用。"""
+        symbol = params.get("symbol")
+        if not symbol:
+            raise ValueError("stock_financial_abstract 需要 symbol 参数")
+
+        def _akshare() -> Any:
+            df = self.ak.stock_financial_abstract(symbol=symbol)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                raise ValueError("AKShare financial returned empty")
+            return df
+
+        def _baostock() -> Any:
+            try:
+                import baostock as bs  # type: ignore
+                import pandas as pd  # type: ignore
+                lg = bs.login()
+                if lg.error_code != "0":
+                    raise ValueError(f"Baostock login failed: {lg.error_msg}")
+                code = _stock_symbol_to_bs_code(symbol)
+                year = int(params.get("year") or date.today().year)
+                rs = bs.query_profit_data(code, year, 0)
+                bs.logout()
+                if rs.error_code != "0":
+                    raise ValueError(f"Baostock profit query failed: {rs.error_msg}")
+                rows = []
+                while rs.next():
+                    rows.append(rs.get_row_data())
+                if not rows:
+                    raise ValueError("Baostock financial returned empty")
+                df = pd.DataFrame(rows, columns=rs.fields)
+                return df
+            except ImportError:
+                raise ValueError("baostock not installed")
+
+        return self._try_sources([("akshare", _akshare), ("baostock", _baostock)])
+
+    def _fetch_stock_yjbb_em(self, params: dict[str, Any]) -> Any:
+        """业绩快报：AKShare，Baostock 无直接等价接口。"""
+        date_val = params.get("date", "")
+        if not date_val:
+            from datetime import date as d
+            date_val = d.today().strftime("%Y%m%d")
+            date_val = date_val[:4] + "1231"
+        date_val = str(date_val).replace("-", "")[:8]
+        df = self.ak.stock_yjbb_em(date=date_val)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            raise ValueError("AKShare stock_yjbb_em returned empty")
+        return df
+
+    def _fetch_stock_yjyg_em(self, params: dict[str, Any]) -> Any:
+        """业绩预告：AKShare，Baostock 无直接等价接口。"""
+        date_val = params.get("date", "")
+        if not date_val:
+            from datetime import date as d
+            date_val = d.today().strftime("%Y%m%d")
+            date_val = date_val[:4] + "1231"
+        date_val = str(date_val).replace("-", "")[:8]
+        df = self.ak.stock_yjyg_em(date=date_val)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            raise ValueError("AKShare stock_yjyg_em returned empty")
+        return df
 
     def _fetch_futures_zh_spot(self, params: dict[str, Any]) -> Any:
         import re
@@ -833,18 +1180,30 @@ class AkshareBackend:
                 raise ValueError("Tushare cb_basic returned empty")
             return df
 
+        def _jsl_cov() -> Any:
+            """集思录可转债数据，支持 JISILU_COOKIE 以获取全量数据"""
+            cookie = _get_jisilu_cookie()
+            return self.ak.bond_cb_jsl(cookie=cookie)
+
         return self._try_sources(
             [
                 ("sina", lambda: self.ak.bond_zh_hs_cov_spot()),
                 ("em_cov", lambda: self.ak.bond_zh_cov()),
                 ("em_comparison", lambda: self.ak.bond_cov_comparison()),
+                ("jsl", _jsl_cov),
                 ("tushare_cb", _tushare_cb_basic),
             ]
         )
 
     def _fetch_bond_cb_meta(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "summary":
-            return self.ak.bond_cb_summary_sina()
+            def _jsl_summary() -> Any:
+                cookie = _get_jisilu_cookie()
+                return self.ak.bond_cb_jsl(cookie=cookie)
+            return self._try_sources([
+                ("sina", lambda: self.ak.bond_cb_summary_sina()),
+                ("jsl", _jsl_summary),
+            ])
         return self.ak.bond_cb_profile_sina(symbol=params["symbol"])
 
     def _fetch_stock_board_industry(self, params: dict[str, Any]) -> Any:
@@ -892,6 +1251,43 @@ class AkshareBackend:
                 ("ths", lambda: self.ak.stock_board_concept_name_ths()),
             ]
         )
+
+    def _fetch_option_finance_board(self, params: dict[str, Any]) -> Any:
+        """金融期权行情板，symbol 如华夏上证50ETF期权，end_month 如 2503。"""
+        symbol = params.get("symbol", "华夏上证50ETF期权")
+        end_month = params.get("end_month")
+        if not end_month:
+            end_month = date.today().strftime("%y") + date.today().strftime("%m").zfill(2)
+        return self.ak.option_finance_board(symbol=symbol, end_month=end_month)
+
+    def _fetch_option_current_em(self, params: dict[str, Any]) -> Any:
+        """期权当日行情。东方财富全市场。"""
+        return self.ak.option_current_em()
+
+    def _fetch_option_sse_daily_sina(self, params: dict[str, Any]) -> Any:
+        """上交所期权日线。symbol 为合约代码。"""
+        symbol = params.get("symbol")
+        if not symbol:
+            raise ValueError("option_sse_daily_sina 需要 symbol 参数（合约代码）")
+        return self.ak.option_sse_daily_sina(symbol=symbol)
+
+    def _fetch_option_commodity_hist(self, params: dict[str, Any]) -> Any:
+        """商品期权历史。exchange: dce/shfe/czce。"""
+        symbol = params.get("symbol")
+        if not symbol:
+            raise ValueError("option_commodity_hist 需要 symbol 参数")
+        trade_date = params.get("trade_date") or params.get("date")
+        if not trade_date:
+            trade_date = date.today().strftime("%Y%m%d")
+        trade_date = str(trade_date).replace("-", "")[:8]
+        exchange = str(params.get("exchange", "dce")).lower()
+        if exchange == "dce":
+            return self.ak.option_hist_dce(symbol=symbol, trade_date=trade_date)
+        if exchange == "shfe":
+            return self.ak.option_hist_shfe(symbol=symbol, trade_date=trade_date)
+        if exchange == "czce":
+            return self.ak.option_hist_czce(symbol=symbol, trade_date=trade_date)
+        raise ValueError("option_commodity_hist 的 exchange 需为 dce/shfe/czce")
 
 
 def create_backend(test_mode: bool):

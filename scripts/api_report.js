@@ -190,6 +190,57 @@ const INTERFACE_SPEC = {
     },
     returnDesc: "概念板块列表/历史",
   },
+  stock_index_zh_hist: {
+    params: { symbol: "000001", start_date: "2024-01-01", end_date: "2024-01-31" },
+    paramDesc: {
+      symbol: "必填，指数代码如 000001(上证)、399001(深证)、399006(创业板)",
+      start_date: "开始日期",
+      end_date: "结束日期",
+    },
+    returnDesc: "股票指数历史日线",
+  },
+  stock_financial_abstract: {
+    params: { symbol: "000001" },
+    paramDesc: { symbol: "必填，股票代码" },
+    returnDesc: "财务摘要指标",
+  },
+  stock_yjbb_em: {
+    params: { date: "20241231" },
+    paramDesc: { date: "必填，报告期 YYYYMMDD，如 20241231/20240930" },
+    returnDesc: "业绩快报",
+  },
+  stock_yjyg_em: {
+    params: { date: "20241231" },
+    paramDesc: { date: "必填，报告期 YYYYMMDD" },
+    returnDesc: "业绩预告",
+  },
+  option_finance_board: {
+    params: { symbol: "华夏上证50ETF期权", end_month: "2503" },
+    paramDesc: {
+      symbol: "可选，如华夏上证50ETF期权、华泰柏瑞沪深300ETF期权",
+      end_month: "可选，到期月 YYMM，如 2503",
+    },
+    returnDesc: "金融期权行情板",
+  },
+  option_current_em: {
+    params: {},
+    paramDesc: {},
+    returnDesc: "期权当日行情（东方财富全市场）",
+  },
+  option_sse_daily_sina: {
+    params: { symbol: "10005050C2503M" },
+    paramDesc: { symbol: "必填，上交所期权合约代码" },
+    returnDesc: "上交所期权日线",
+  },
+  option_commodity_hist: {
+    params: { symbol: "m2503-C-4000", exchange: "dce", trade_date: "2024-01-02" },
+    paramDesc: {
+      symbol: "必填，商品期权合约",
+      exchange: "dce|shfe|czce",
+      trade_date: "可选，YYYYMMDD",
+    },
+    returnDesc: "商品期权历史",
+  },
 };
 
 async function isServerUp() {

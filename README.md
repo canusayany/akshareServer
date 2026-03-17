@@ -28,7 +28,7 @@
 - `test/index.test.js`：Node 客户端测试。
 - `test/tool.test.js`：agent tool 调用层测试。
 - `docs/design.md`：设计说明。
-- `docs/API.md`：HTTP 接口文档（含入参、返回值、实际返回数据示例）。
+- `docs/API.md`：HTTP 接口文档（含入参、返回值、LLM 调用约定、错误格式）。
 
 ## API 接口测试报告
 
@@ -83,6 +83,10 @@ SQLite 负责保存归一化后的请求键和结果数据。
 - `stock_zh_a_hist`
 - `stock_intraday_em`
 - `stock_bid_ask_em`
+- `stock_index_zh_hist`（指数日线）
+- `stock_financial_abstract`（财务摘要）
+- `stock_yjbb_em`（业绩快报）
+- `stock_yjyg_em`（业绩预告）
 - `futures_zh_spot`
 - `futures_zh_hist`
 - `match_main_contract`
@@ -98,6 +102,10 @@ SQLite 负责保存归一化后的请求键和结果数据。
 - `bond_cb_meta`
 - `stock_board_industry`
 - `stock_board_concept`
+- `option_finance_board`（金融期权行情板）
+- `option_current_em`（期权当日行情）
+- `option_sse_daily_sina`（上交所期权日线）
+- `option_commodity_hist`（商品期权历史）
 
 ## 安装
 
@@ -168,6 +176,7 @@ console.log(macroResult.rows);
 
 - `stock`
 - `futures`
+- `option`
 - `fund`
 - `macro`
 - `commodity`
@@ -188,14 +197,13 @@ const result = await registry.invoke("macro_china_all");
 
 ## API 测试报告
 
-启动真实服务器后运行：
-
 ```bash
+npm run test:report:stub   # 离线 Stub 模式，生成 reports/test_report_stub.json、.md（入参/返回值）
 npm run test:report        # 需先 .\start_nossl.ps1
 npm run test:report:auto   # 自动启动服务器并测试
 ```
 
-输出：`reports/api_test_report.json`、`docs/API.md`（各接口入参、返回值）
+输出：`reports/api_test_report.json`、`docs/API.md`（真实数据）；`reports/test_report_stub.*`（Stub 入参/返回值文档）
 
 ## 环境变量
 
@@ -203,7 +211,12 @@ npm run test:report:auto   # 自动启动服务器并测试
 - `AKSHARE_NODE_DB_PATH`：SQLite 数据库路径，默认 `./data/akshare_cache.sqlite`。
 - `AKSHARE_NODE_MAX_BYTES`：单次响应最大字节数，默认 `2000`。
 - `AKSHARE_NODE_TEST_MODE`：测试模式。开启后使用内置 stub 后端，不访问真实 `akshare`。
-- `TUSHARE_TOKEN`：可选，Tushare 备选数据源 Token。设置后启用期货日线等 Tushare 回退。未捐赠账号有调用限制。可复制 `.env.example` 为 `.env` 并填入 token。
+- `TUSHARE_TOKEN`：可选，Tushare 备选数据源。A股/期货主源失败时回退。
+- A股/指数/财务：主源失败时自动回退 Baostock（无需配置）。
+- 非交易日单日查询返回空数据，`message` 为「非交易日」。
+- `JISILU_USERNAME_AES` / `JISILU_PASSWORD_AES`：可选，集思录登录凭证（浏览器登录时 Form Data 中已 AES 加密的 hex，参考 QuantDaemon）。F12 → Network → 登录时抓 `login_process` 的 `user_name`、`password`。
+- `JISILU_COOKIE`：可选，或直接设 Cookie 字符串（`document.cookie`）。
+- `JISILU_COOKIE_AES`：可选，iv:cipher:tag 密文，需 `ENCRYPTION_KEY` 解密。
 
 ## Windows 开发、Linux 运行注意事项
 

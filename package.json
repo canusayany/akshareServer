@@ -8,7 +8,8 @@
     "test": "node --test",
     "test:http": "node scripts/run_http_suite.js",
     "test:report": "node scripts/api_report.js",
-    "test:report:auto": "node scripts/run_api_report.js"
+    "test:report:auto": "node scripts/run_api_report.js",
+    "test:report:stub": "node scripts/test_report_stub.js"
   },
   "engines": {
     "node": ">=20"

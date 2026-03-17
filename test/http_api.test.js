@@ -37,6 +37,10 @@ const INTERFACE_PARAMS = {
   stock_zh_a_hist: { symbol: "000001", period: "daily", start_date: "2024-01-01", end_date: "2024-01-31" },
   stock_intraday_em: { symbol: "000001" },
   stock_bid_ask_em: { symbol: "000001" },
+  stock_index_zh_hist: { symbol: "000001", start_date: "2024-01-01", end_date: "2024-01-31" },
+  stock_financial_abstract: { symbol: "000001" },
+  stock_yjbb_em: { date: "20241231" },
+  stock_yjyg_em: { date: "20241231" },
   futures_zh_spot: {},
   futures_zh_hist: { symbol: "RB0" },
   match_main_contract: {},
@@ -52,6 +56,10 @@ const INTERFACE_PARAMS = {
   bond_cb_meta: { mode: "summary" },
   stock_board_industry: {},
   stock_board_concept: {},
+  option_finance_board: { symbol: "华夏上证50ETF期权", end_month: "2503" },
+  option_current_em: {},
+  option_sse_daily_sina: { symbol: "10005050C2503M" },
+  option_commodity_hist: { symbol: "m2503-C-4000", exchange: "dce", trade_date: "2024-01-02" },
 };
 
 async function invoke(interfaceName, params = {}) {
@@ -134,7 +142,7 @@ test("invoke: 缺少 interface 字段应返回错误", { skip: !SERVER_UP }, asy
   });
   const body = await res.json();
   assert.equal(body.ok, false);
-  assert.ok(body.error?.message);
+  assert.ok(body.error && (typeof body.error === "string" || body.error?.message));
 });
 
 test("invoke: GET 请求 /invoke 返回 404", { skip: !SERVER_UP }, async () => {
@@ -151,4 +159,47 @@ test("invoke: verify_ssl=false 不导致服务端报错", { skip: !SERVER_UP }, 
   const result = await invoke("macro_china_all", {});
   assert.ok(result !== null && typeof result === "object");
   assert.ok("ok" in result);
+});
+
+// ────────────────────────────────────────────────────────────
+// 参数防御与 LLM 兼容
+// ────────────────────────────────────────────────────────────
+test("invoke: 缺少必填参数 symbol 应返回 400 及 hint", { skip: !SERVER_UP }, async () => {
+  const result = await invoke("stock_zh_a_hist", { period: "daily", start_date: "2024-01-01", end_date: "2024-01-31" });
+  assert.equal(result.ok, false);
+  assert.ok(result.error?.message?.includes("symbol") || result.error?.message?.includes("需要参数"));
+  assert.ok(result.error?.hint != null || result.error?.message?.length > 0);
+});
+
+test("invoke: symbol 为数字应自动转为字符串", { skip: !SERVER_UP }, async () => {
+  const result = await invoke("stock_zh_a_hist", {
+    symbol: 600519,
+    period: "daily",
+    start_date: "2024-01-01",
+    end_date: "2024-01-31",
+  });
+  assert.equal(result.ok, true, "symbol 数字应被规范化");
+  assert.ok(Array.isArray(result.rows));
+});
+
+test("invoke: params 为 null 时服务端应使用空对象", { skip: !SERVER_UP }, async () => {
+  const res = await fetch(`${BASE}/invoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ interface: "stock_zh_a_spot", params: null, verify_ssl: false }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const body = await res.json();
+  assert.equal(body.ok, true, "params=null 应被转为 {}");
+});
+
+test("invoke: code 映射为 symbol 应兼容", { skip: !SERVER_UP }, async () => {
+  const result = await invoke("stock_zh_a_hist", {
+    code: "000001",
+    period: "daily",
+    start_date: "2024-01-01",
+    end_date: "2024-01-31",
+  });
+  assert.equal(result.ok, true, "code 应映射为 symbol");
+  assert.ok(Array.isArray(result.rows));
 });

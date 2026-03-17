@@ -2,6 +2,39 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+# A股/指数/期货共用上交所交易日历
+_XSHG_CALENDAR = None
+
+
+def _get_xshg_calendar():
+    """懒加载上交所交易日历。"""
+    global _XSHG_CALENDAR
+    if _XSHG_CALENDAR is None:
+        try:
+            import exchange_calendars as xcals  # noqa: PLC0415
+            _XSHG_CALENDAR = xcals.get_calendar("XSHG")
+        except Exception:
+            _XSHG_CALENDAR = False
+    return _XSHG_CALENDAR if _XSHG_CALENDAR else None
+
+
+def is_trading_day(d: date | datetime | str | None) -> bool:
+    """判断给定日期是否为 A 股/指数/期货交易日。非交易日（周末、节假日）返回 False。"""
+    if d is None:
+        return False
+    if isinstance(d, str):
+        dt = parse_datetime_like(d)
+        d = dt.date() if dt else None
+    elif isinstance(d, datetime):
+        d = d.date()
+    if d is None:
+        return False
+    cal = _get_xshg_calendar()
+    if cal is None:
+        # 无 exchange_calendars 时退化为周末检查
+        return d.weekday() < 5
+    return cal.is_session(d)
+
 
 CN_A_HALF_HOUR_SLOTS = {
     "09:30",
