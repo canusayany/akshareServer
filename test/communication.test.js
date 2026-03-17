@@ -262,6 +262,30 @@ test("stock_board_concept — no params returns concept rows", async () => {
   assertShape(r, "stock_board_concept");
 });
 
+test("stock_board_industry — mode=hist returns hist rows", async () => {
+  const c = testClient({ dbPath: tmpDb("board-ind-hist") });
+  const r = await c.stock_board_industry({
+    mode: "hist",
+    symbol: "石油行业",
+    start_date: "20260217",
+    end_date: "20260317",
+  });
+  assertShape(r, "stock_board_industry");
+  assert.ok(r.rows.length > 0);
+});
+
+test("stock_board_concept — mode=hist returns hist rows", async () => {
+  const c = testClient({ dbPath: tmpDb("board-con-hist") });
+  const r = await c.stock_board_concept({
+    mode: "hist",
+    symbol: "6G概念",
+    start_date: "20260217",
+    end_date: "20260317",
+  });
+  assertShape(r, "stock_board_concept");
+  assert.ok(r.rows.length > 0);
+});
+
 // ---------------------------------------------------------------------------
 // 期权
 // ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const BASE = "http://127.0.0.1:8888";
-const TIMEOUT_MS = 25_000;
+const TIMEOUT_MS = 60_000;
 
 async function isServerUp() {
   try {

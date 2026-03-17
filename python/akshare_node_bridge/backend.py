@@ -5,7 +5,8 @@ from datetime import date, datetime
 from decimal import Decimal
 import math
 import os
-from typing import Any
+import time
+from typing import Any, Callable
 
 
 _SSL_PATCHED = False
@@ -72,6 +73,49 @@ def _patch_ssl_if_needed(force: bool = False) -> None:
         pass
 
     _SSL_PATCHED = True
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """判断是否为可重试的瞬时错误（网络超时、连接中断等）。"""
+    msg = str(exc).lower()
+    return (
+        "timeout" in msg
+        or "timed out" in msg
+        or "connection aborted" in msg
+        or "remotedisconnected" in msg
+        or "remote end closed" in msg
+        or "econnreset" in msg
+        or "etimedout" in msg
+        or "socket hang up" in msg
+    )
+
+
+def _retry_on_transient(
+    fn: Callable[[], Any],
+    max_attempts: int = 3,
+    delay: float = 2.0,
+) -> Any:
+    """对瞬时错误进行重试，非瞬时错误直接抛出。"""
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if not _is_transient_error(e) or attempt >= max_attempts - 1:
+                raise
+            time.sleep(delay)
+    if last_exc:
+        raise last_exc
+    return None
+
+
+def _normalize_date_yyyymmdd(val: str | None) -> str:
+    """将日期转为 YYYYMMDD 格式，供同花顺接口使用。"""
+    if not val:
+        return ""
+    s = str(val).strip().replace("-", "").replace("/", "")[:8]
+    return s if len(s) == 8 else ""
 
 
 MACRO_DATASETS = (
@@ -257,6 +301,12 @@ class StubBackend:
             return [{"date": "2024-01-02", "open": 0.04, "high": 0.05, "low": 0.04, "close": 0.05, "volume": 1000}]
         if interface_name == "option_commodity_hist":
             return [{"date": "2024-01-02", "symbol": "m2503-C-4000", "close": 0.05, "volume": 500}]
+        if interface_name == "stock_board_industry" and params.get("mode") == "hist":
+            day = str(params.get("start_date", "20240217"))[:10].replace("-", "")
+            return [{"date": day, "open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000000}]
+        if interface_name == "stock_board_concept" and params.get("mode") == "hist":
+            day = str(params.get("start_date", "20240217"))[:10].replace("-", "")
+            return [{"date": day, "open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000000}]
         return [{"interface": interface_name, "params": params}]
 
 
@@ -1208,20 +1258,35 @@ class AkshareBackend:
 
     def _fetch_stock_board_industry(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self._try_sources(
-                [
-                    (
-                        "em",
-                        lambda: self.ak.stock_board_industry_hist_em(
-                            symbol=params["symbol"],
-                            start_date=params.get("start_date"),
-                            end_date=params.get("end_date"),
-                            period=params.get("period", "daily"),
-                            adjust=params.get("adjust", ""),
-                        ),
+            symbol = params["symbol"]
+            start_date = params.get("start_date")
+            end_date = params.get("end_date")
+            period = params.get("period", "daily")
+            adjust = params.get("adjust", "")
+
+            def _em() -> Any:
+                return _retry_on_transient(
+                    lambda: self.ak.stock_board_industry_hist_em(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        period=period,
+                        adjust=adjust,
                     ),
-                ]
-            )
+                )
+
+            def _ths() -> Any:
+                sd = _normalize_date_yyyymmdd(start_date)
+                ed = _normalize_date_yyyymmdd(end_date)
+                if not sd or not ed:
+                    raise ValueError("stock_board_industry hist 需 start_date 和 end_date")
+                return self.ak.stock_board_industry_index_ths(
+                    symbol=symbol,
+                    start_date=sd,
+                    end_date=ed,
+                )
+
+            return self._try_sources([("em", _em), ("ths", _ths)])
         return self._try_sources(
             [
                 ("em", lambda: self.ak.stock_board_industry_name_em()),
@@ -1231,20 +1296,35 @@ class AkshareBackend:
 
     def _fetch_stock_board_concept(self, params: dict[str, Any]) -> Any:
         if params.get("mode") == "hist":
-            return self._try_sources(
-                [
-                    (
-                        "em",
-                        lambda: self.ak.stock_board_concept_hist_em(
-                            symbol=params["symbol"],
-                            start_date=params.get("start_date"),
-                            end_date=params.get("end_date"),
-                            period=params.get("period", "daily"),
-                            adjust=params.get("adjust", ""),
-                        ),
+            symbol = params["symbol"]
+            start_date = params.get("start_date")
+            end_date = params.get("end_date")
+            period = params.get("period", "daily")
+            adjust = params.get("adjust", "")
+
+            def _em() -> Any:
+                return _retry_on_transient(
+                    lambda: self.ak.stock_board_concept_hist_em(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        period=period,
+                        adjust=adjust,
                     ),
-                ]
-            )
+                )
+
+            def _ths() -> Any:
+                sd = _normalize_date_yyyymmdd(start_date)
+                ed = _normalize_date_yyyymmdd(end_date)
+                if not sd or not ed:
+                    raise ValueError("stock_board_concept hist 需 start_date 和 end_date")
+                return self.ak.stock_board_concept_index_ths(
+                    symbol=symbol,
+                    start_date=sd,
+                    end_date=ed,
+                )
+
+            return self._try_sources([("em", _em), ("ths", _ths)])
         return self._try_sources(
             [
                 ("em", lambda: self.ak.stock_board_concept_name_em()),
