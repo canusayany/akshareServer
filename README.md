@@ -25,14 +25,30 @@
 - `src/index.js`：Node 客户端，对外导出完整函数。
 - `src/tool.js`：适配 agent tool 的统一调用层。
 - `python/akshare_node_bridge`：Python 桥接、AKShare 适配、SQLite 缓存、数据量限制逻辑。
+- `scripts/run_http_suite.js`：自动启动本地 HTTP 服务并执行 HTTP 测试。
+- `scripts/run_api_report.js`：自动启动真实服务并生成 API 报告。
+- `scripts/python_runtime.js`：统一解析 Python 解释器并补齐必需依赖。
+- `scripts/local_server.js`：共享的本地服务启动、健康检查与停止逻辑。
 - `test/index.test.js`：Node 客户端测试。
 - `test/tool.test.js`：agent tool 调用层测试。
 - `docs/design.md`：设计说明。
-- `docs/API.md`：HTTP 接口文档（含入参、返回值、LLM 调用约定、错误格式）。
+- `docs/API.md`：HTTP 接口文档与最近一次真实测试结果。
 
 ## API 接口测试报告
 
 运行 `npm run test:report:auto` 可自动启动服务器并测试全部接口，生成 `reports/api_test_report.json` 和 `docs/API.md`。默认启用 SSL 验证；多数据源回退可在主源失败时自动切备选。
+
+## 常用脚本
+
+- `npm run test`：执行全部 Node 测试。
+- `npm run test:http`：使用统一入口 `scripts/run_http_suite.js`，自动启动 Stub HTTP 服务并执行 `test/http_api.test.js`。
+- `npm run test:report`：对已启动的本地服务生成真实 API 报告。
+- `npm run test:report:auto`：自动启动真实服务并生成 `reports/api_test_report.json` 和 `docs/API.md`。
+- `npm run test:report:stub`：生成离线 Stub 报告。
+- `./start_python_server.ps1` 或 `./start_python_server.cmd`：启动本地 HTTP 服务。
+- `./start_nossl.ps1` 或 `./start_nossl.cmd`：关闭外部 HTTPS 证书校验后启动服务。
+
+`reports/` 目录仅保存运行脚本时生成的测试产物，不再提交固定示例文件；需要时可通过测试脚本重新生成。
 
 ## 运行方式
 
@@ -198,16 +214,17 @@ const result = await registry.invoke("macro_china_all");
 ## API 测试报告
 
 ```bash
+npm run test:http          # 自动启动 Stub HTTP 服务并执行 HTTP 测试
 npm run test:report:stub   # 离线 Stub 模式，生成 reports/test_report_stub.json、.md（入参/返回值）
 npm run test:report        # 需先 .\start_nossl.ps1
 npm run test:report:auto   # 自动启动服务器并测试
 ```
 
-输出：`reports/api_test_report.json`、`docs/API.md`（真实数据）；`reports/test_report_stub.*`（Stub 入参/返回值文档）
+输出：`reports/api_test_report.json`、`docs/API.md`（真实数据）；`reports/test_report_stub.*`（Stub 入参/返回值文档）。`reports/` 下文件为生成产物，可随时重建。
 
 ## 环境变量
 
-- `AKSHARE_NODE_PYTHON_BIN`：Python 可执行文件路径。Windows 默认 `py`，Linux 默认 `python3`。
+- `AKSHARE_NODE_PYTHON_BIN`：显式指定 Python 可执行文件路径。未设置时优先使用项目 `.venv`，再回退到系统 `py`/`python3`/`python`。
 - `AKSHARE_NODE_DB_PATH`：SQLite 数据库路径，默认 `./data/akshare_cache.sqlite`。
 - `AKSHARE_NODE_MAX_BYTES`：单次响应最大字节数，默认 `2000`。
 - `AKSHARE_NODE_TEST_MODE`：测试模式。开启后使用内置 stub 后端，不访问真实 `akshare`。
@@ -224,6 +241,6 @@ npm run test:report:auto   # 自动启动服务器并测试
 - Node 侧路径使用 `path.join()` 构建。
 - Python 侧路径使用 `pathlib.Path` 构建。
 - SQLite 使用标准库 `sqlite3`，无额外平台依赖。
-- Node 客户端运行时会自动选择 Windows 下的 `py` 或 Linux 下的 `python3`。
-- 测试也会按平台自动选择 Python 启动命令，不依赖 Windows 专用别名。
+- Node 客户端和测试脚本都会优先选择项目 `.venv`，缺失时再回退到系统 Python。
+- 启动脚本会在需要时自动检查并安装 `akshare`、`pandas`、`requests`、`baostock`、`certifi` 等必需依赖。
 - Linux 部署时只需要确保 `python3`、`pip` 和网络访问 `akshare` 所需数据源即可。

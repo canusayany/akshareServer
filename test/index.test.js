@@ -157,3 +157,44 @@ test("incremental cache: 先请求单月写入缓存，再请求跨月时命中�
   assert.equal(janFeb.cache_hit, true, "1 月和 2 月均已在缓存，应全命中");
   assert.ok(janFeb.rows.length >= jan.rows.length + feb.rows.length);
 });
+
+test("stock_index_zh_hist supports a 40-day 000001 range and reuses incremental cache", async () => {
+  const dbPath = createTempDbPath("index-40-days");
+  const client = createTestClient({ dbPath, maxBytes: 2000 });
+  const params = {
+    symbol: "000001",
+    start_date: "2024-01-10",
+    end_date: "2024-02-18",
+  };
+
+  const first = await client.stock_index_zh_hist(params);
+  assert.equal(first.ok, true);
+  assert.equal(first.interface, "stock_index_zh_hist");
+  assert.equal(first.cache_hit, false);
+  assert.ok(first.rows.length >= 1);
+  assert.ok(first.requested_rows >= first.returned_rows);
+  assert.equal(first.params.symbol, "000001");
+
+  const second = await client.stock_index_zh_hist(params);
+  assert.equal(second.ok, true);
+  assert.equal(second.cache_hit, true, "40 天跨月指数请求应命中分片缓存");
+  assert.ok(second.rows.length >= first.rows.length);
+});
+
+test("stock_index_zh_hist long daily range reduces rows instead of hanging", async () => {
+  const client = createTestClient({
+    dbPath: createTempDbPath("index-40-days-reduce"),
+    maxBytes: 320,
+  });
+
+  const result = await client.stock_index_zh_hist({
+    symbol: "000001",
+    start_date: "2024-01-10",
+    end_date: "2024-02-18",
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(result.requested_rows > result.returned_rows, "长区间指数日线应被均匀降采样");
+  assert.ok(result.sampling_step > 1, "降采样后步长应大于 1");
+  assert.ok(result.rows.length >= 2, "降采样后仍应保留代表性样本");
+});

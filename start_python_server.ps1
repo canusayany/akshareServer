@@ -19,6 +19,7 @@ $requirements = Join-Path $root "requirements.txt"
 $dataDir = Join-Path $root "data"
 $dbPath = Join-Path $dataDir "akshare_cache.sqlite"
 $pythonPath = Join-Path $root "python"
+$requiredModules = @("akshare", "pandas", "requests", "baostock", "certifi")
 
 function Get-PythonLauncher {
     foreach ($candidate in @("py", "python")) {
@@ -43,6 +44,31 @@ function Test-PortInUse {
     }
 }
 
+function Test-RequiredModules {
+    param(
+        [string]$PythonExe,
+        [string[]]$Modules
+    )
+
+    $jsonModules = ($Modules | ConvertTo-Json -Compress)
+    $code = "import importlib.util, json; mods = $jsonModules; print(json.dumps({m: bool(importlib.util.find_spec(m)) for m in mods}))"
+    try {
+        $output = & $PythonExe -c $code 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($output)) {
+            return $false
+        }
+        $state = $output | ConvertFrom-Json
+        foreach ($module in $Modules) {
+            if (-not $state.$module) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 if (Test-PortInUse -Port 8888) {
     throw "127.0.0.1:8888 is already in use. Stop the existing process before starting the local server."
 }
@@ -58,6 +84,11 @@ if (-not (Test-Path $venvPython)) {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create virtual environment at $venvDir"
     }
+}
+
+if ($SkipInstall -and -not (Test-RequiredModules -PythonExe $venvPython -Modules $requiredModules)) {
+    Write-Host "Detected missing Python packages in $venvDir, forcing dependency install." -ForegroundColor Yellow
+    $SkipInstall = $false
 }
 
 if (-not $SkipInstall) {

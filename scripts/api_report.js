@@ -191,13 +191,14 @@ const INTERFACE_SPEC = {
     returnDesc: "概念板块列表/历史",
   },
   stock_index_zh_hist: {
-    params: { symbol: "000001", start_date: "2024-01-01", end_date: "2024-01-31" },
+    params: { symbol: "000001", start_date: "2024-01-10", end_date: "2024-02-18" },
     paramDesc: {
       symbol: "必填，指数代码如 000001(上证)、399001(深证)、399006(创业板)",
       start_date: "开始日期",
       end_date: "结束日期",
     },
     returnDesc: "股票指数历史日线",
+    caseDesc: "长区间样例：40 天 000001 指数日线",
   },
   stock_financial_abstract: {
     params: { symbol: "000001" },
@@ -287,6 +288,7 @@ async function main() {
     const entry = {
       interface: iface,
       params: spec.params,
+      requestBody: { interface: iface, params: spec.params, verify_ssl: false },
       success: false,
       rowCount: 0,
       error: null,
@@ -305,6 +307,13 @@ async function main() {
       if (result.ok) {
         entry.success = true;
         entry.rowCount = result.returned_rows ?? (result.rows?.length ?? 0);
+        entry.responseMeta = {
+          ok: result.ok,
+          cache_hit: result.cache_hit,
+          requested_rows: result.requested_rows,
+          returned_rows: result.returned_rows,
+          sampling_step: result.sampling_step,
+        };
         const first = result.rows?.[0];
         if (first && typeof first === "object") {
           entry.sampleRowKeys = Object.keys(first).slice(0, 10);
@@ -417,8 +426,25 @@ function generateApiDoc(report) {
     lines.push("");
     lines.push(`- **说明**：${spec.returnDesc}`);
     lines.push(`- **测试状态**：${status}`);
+    if (spec.caseDesc) {
+      lines.push(`- **测试场景**：${spec.caseDesc}`);
+    }
     if (entry?.success && entry.sampleRowKeys?.length) {
       lines.push(`- **返回字段示例**：${entry.sampleRowKeys.join(", ")}`);
+    }
+    if (entry?.requestBody) {
+      lines.push("");
+      lines.push("**测试请求体示例**：");
+      lines.push("```json");
+      lines.push(JSON.stringify(entry.requestBody, null, 2));
+      lines.push("```");
+    }
+    if (entry?.responseMeta) {
+      lines.push("");
+      lines.push("**实际返回元信息**：");
+      lines.push("```json");
+      lines.push(JSON.stringify(entry.responseMeta, null, 2));
+      lines.push("```");
     }
     if (entry?.actualResponseSample) {
       lines.push("");

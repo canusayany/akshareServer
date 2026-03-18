@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -81,7 +82,10 @@ export class AkshareNodeClient {
    */
   constructor(options = {}) {
     this.projectRoot = options.projectRoot || process.cwd();
-    this.pythonBin = options.pythonBin || (os.platform() === "win32" ? "py" : "python3");
+    const projectVenvPython = path.join(this.projectRoot, ".venv", os.platform() === "win32" ? "Scripts/python.exe" : "bin/python");
+    this.pythonBin = options.pythonBin
+      || process.env.AKSHARE_NODE_PYTHON_BIN
+      || (fs.existsSync(projectVenvPython) ? projectVenvPython : (os.platform() === "win32" ? "py" : "python3"));
     this.dbPath =
       options.dbPath || process.env.AKSHARE_NODE_DB_PATH || path.join(this.projectRoot, "data", "akshare_cache.sqlite");
     this.maxBytes = options.maxBytes || Number(process.env.AKSHARE_NODE_MAX_BYTES || 2000);

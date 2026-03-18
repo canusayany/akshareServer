@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import math
 import os
 import time
 from typing import Any, Callable
+
+from .calendar import parse_datetime_like
 
 
 _SSL_PATCHED = False
@@ -282,10 +284,27 @@ class StubBackend:
             ]
         if interface_name == "stock_index_zh_hist":
             sym = str(params.get("symbol", "000001")).replace("sh.", "").replace("sz.", "")[:6]
-            day = str(params.get("start_date", "2024-01-02"))[:10]
-            return [
-                {"date": day, "open": 3000, "high": 3010, "low": 2990, "close": 3005, "volume": 1000000},
-            ]
+            start_day = parse_datetime_like(params.get("start_date") or "2024-01-02")
+            end_day = parse_datetime_like(params.get("end_date") or params.get("start_date") or "2024-01-02")
+            if start_day is None or end_day is None:
+                return [{"date": "2024-01-02", "open": 3000, "high": 3010, "low": 2990, "close": 3005, "volume": 1000000}]
+            rows = []
+            current = start_day.date()
+            end_date = end_day.date()
+            offset = 0
+            while current <= end_date:
+                rows.append({
+                    "date": current.strftime("%Y-%m-%d"),
+                    "symbol": sym,
+                    "open": 3000 + offset,
+                    "high": 3010 + offset,
+                    "low": 2990 + offset,
+                    "close": 3005 + offset,
+                    "volume": 1000000 + offset * 1000,
+                })
+                current += timedelta(days=1)
+                offset += 1
+            return rows
         if interface_name == "stock_financial_abstract":
             sym = params.get("symbol", "000001")
             return [{"code": str(sym), "statDate": "2024-03-31", "roeAvg": 10.5, "netProfit": 1000}]
@@ -333,11 +352,34 @@ def _stock_symbol_to_bs_code(symbol: str) -> str:
 
 def _index_symbol_to_bs_code(symbol: str) -> str:
     """指数代码转 baostock：000001->sh.000001, 399001->sz.399001"""
-    s = str(symbol).strip().lower()
-    if s.startswith(("sh", "sz")):
-        return s if "." in s else f"{s[:2]}.{s[2:]}"
-    s = s.zfill(6)
-    return f"sh.{s}" if s.startswith("0") and len(s) == 6 else f"sz.{s}"
+    code, market = _normalize_index_symbol(symbol)
+    return f"{market}.{code}"
+
+
+def _normalize_index_symbol(symbol: str | None) -> tuple[str, str]:
+    """统一指数代码与市场前缀，兼容 sh000001 / sh.000001 / 000001。"""
+    raw = str(symbol or "").strip().lower().replace(".", "")
+    market = "sh"
+
+    if raw.startswith("sh"):
+        market = "sh"
+        code = raw[2:]
+    elif raw.startswith("sz"):
+        market = "sz"
+        code = raw[2:]
+    else:
+        code = raw[-6:]
+
+    if not code.isdigit():
+        return "000001", "sh"
+
+    code = code.zfill(6)
+    if code.startswith("399"):
+        market = "sz"
+    elif code.startswith("000"):
+        market = "sh"
+
+    return code, market
 
 
 def _get_baostock_stock_daily(symbol: str, start_date: str, end_date: str):
@@ -521,7 +563,8 @@ class AkshareBackend:
         self.ak = ak
 
     def _try_sources(self, fetchers: list[tuple[str, Any]], last_exc: Exception | None = None) -> Any:
-        """依次尝试多个数据源，第一个成功即返回"""
+        """依次尝试多个数据源，第一个成功即返回，并汇总失败原因。"""
+        errors: list[str] = []
         for name, fn in fetchers:
             try:
                 result = fn() if callable(fn) else fn
@@ -529,8 +572,10 @@ class AkshareBackend:
                     return result
             except Exception as e:
                 last_exc = e
+                msg = str(e).strip().replace("\n", " ")
+                errors.append(f"{name}: {msg}")
         if last_exc:
-            raise last_exc
+            raise ValueError(f"All data sources failed: {'; '.join(errors)}") from last_exc
         return []
 
     def fetch(self, interface_name: str, params: dict[str, Any]) -> BackendResult:
@@ -662,10 +707,9 @@ class AkshareBackend:
             today = date.today()
             e = today.strftime("%Y%m%d")
             s = (today - timedelta(days=30)).strftime("%Y%m%d")
-        sym_clean = str(symbol).replace("sh.", "").replace("sz.", "").strip().lower()
-        if not sym_clean or not sym_clean[0].isdigit():
-            sym_clean = "000001"
-        akshare_sym = f"sh{sym_clean}" if sym_clean.startswith("0") and len(sym_clean) == 6 else f"sz{sym_clean}"
+        sym_clean, market = _normalize_index_symbol(str(symbol))
+        akshare_sym = f"{market}{sym_clean}"
+        has_explicit_range = bool(params.get("start_date") and params.get("end_date"))
 
         def _akshare() -> Any:
             df = self.ak.stock_zh_index_daily(symbol=akshare_sym)
@@ -686,7 +730,9 @@ class AkshareBackend:
             end_str = f"{e[:4]}-{e[4:6]}-{e[6:8]}"
             return _get_baostock_index_daily(sym_clean, start_str, end_str)
 
-        return self._try_sources([("akshare", _akshare), ("baostock", _baostock)])
+        # 显式区间请求优先走支持服务端日期过滤的 Baostock，避免 AKShare 先拉全量历史再本地裁剪。
+        fetchers = [("baostock", _baostock), ("akshare", _akshare)] if has_explicit_range else [("akshare", _akshare), ("baostock", _baostock)]
+        return self._try_sources(fetchers)
 
     def _fetch_stock_financial_abstract(self, params: dict[str, Any]) -> Any:
         """财务摘要：AKShare 主，Baostock 备用。"""

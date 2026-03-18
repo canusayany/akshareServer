@@ -116,9 +116,12 @@
 | `server.test.js` | 自动启动 HTTP 服务（TEST_MODE=1），测 /health、/tools、/invoke |
 | `http_api.test.js` | 对已运行 HTTP 服务全面测试，需先启动 `start_nossl.ps1` 或 `start_python_server.ps1` |
 
+HTTP 集成测试统一由 `scripts/run_http_suite.js` 负责启动服务和执行 `http_api.test.js`；服务启动和健康检查复用 `scripts/local_server.js`，避免保留多个等价入口脚本。
+
 ```powershell
 node --test                          # 全部测试
 node --test test/communication.test.js   # 仅通信测试
+npm run test:http                    # 自动启动 Stub HTTP 服务并执行 HTTP 测试
 npm run test:report:stub             # 离线生成测试报告（入参/返回值）
 npm run test:report:auto             # 启动真实服务并生成 api_test_report、API 文档
 ```
@@ -138,7 +141,7 @@ requests.exceptions.SSLError: certificate verify failed: unable to get local iss
 `backend.py` 的 `_patch_ssl_if_needed()` 在 `AKSHARE_NO_SSL_VERIFY=1` 时对 `ssl`、`requests`、`httpx` 打补丁，强制 `verify=False`。补丁幂等。
 
 ```powershell
-.\start_python_server.ps1 -NoSslVerify
+.\start_python_server.ps1 -Nossl
 # 或
 $env:AKSHARE_NO_SSL_VERIFY = "1"
 .\start_python_server.ps1

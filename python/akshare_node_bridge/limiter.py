@@ -71,6 +71,15 @@ def sample_group(group: list[dict[str, Any]], step: int) -> list[dict[str, Any]]
     return sampled
 
 
+def sample_rows_evenly(rows: list[dict[str, Any]], step: int) -> list[dict[str, Any]]:
+    if step <= 1 or len(rows) <= 1:
+        return list(rows)
+    sampled = [row for index, row in enumerate(rows) if index % step == 0]
+    if sampled[-1] is not rows[-1]:
+        sampled.append(rows[-1])
+    return sampled
+
+
 def reduce_rows_evenly(
     rows: list[dict[str, Any]],
     max_bytes: int,
@@ -109,5 +118,21 @@ def reduce_rows_evenly(
                 "returned_rows": len(reduced_rows),
                 "sampling_step": step,
             }
+        if len(reduced_rows) >= len(source_rows):
+            break
         step += 1
+
+    global_step = 2
+    while True:
+        reduced_rows = sample_rows_evenly(source_rows, global_step)
+        if compact_json_bytes(reduced_rows) <= max_bytes or len(reduced_rows) <= 1:
+            return {
+                "rows": reduced_rows,
+                "estimated_row_bytes": estimated_row_bytes,
+                "max_rows": max_rows,
+                "requested_rows": requested_rows,
+                "returned_rows": len(reduced_rows),
+                "sampling_step": global_step,
+            }
+        global_step += 1
 

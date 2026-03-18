@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 
 const BASE = "http://127.0.0.1:8888";
 const TIMEOUT_MS = 60_000;
+const LONG_RANGE_INDEX_PARAMS = { symbol: "000001", start_date: "2024-01-10", end_date: "2024-02-18" };
 
 async function isServerUp() {
   try {
@@ -159,6 +160,25 @@ test("invoke: verify_ssl=false 不导致服务端报错", { skip: !SERVER_UP }, 
   const result = await invoke("macro_china_all", {});
   assert.ok(result !== null && typeof result === "object");
   assert.ok("ok" in result);
+});
+
+test("invoke: stock_index_zh_hist 支持 40 天 000001 指数区间", { skip: !SERVER_UP }, async (t) => {
+  const result = await invoke("stock_index_zh_hist", LONG_RANGE_INDEX_PARAMS);
+  if (!result.ok) {
+    const msg = result.error?.message ?? "";
+    if (msg.includes("Unsupported interface") || (msg.includes("KeyError") && msg.includes("'"))) {
+      assert.fail(`stock_index_zh_hist 40 天用例不应报接口或参数解析错误: ${msg}`);
+    }
+    t.diagnostic(`40 天指数用例外部数据源失败（允许）: ${msg}`);
+    return;
+  }
+
+  assertSuccessShape(result, "stock_index_zh_hist");
+  assert.ok(result.returned_rows >= 1, "40 天区间至少应返回 1 行数据");
+  assert.equal(result.params.symbol, LONG_RANGE_INDEX_PARAMS.symbol);
+  assert.equal(result.params.start_date, LONG_RANGE_INDEX_PARAMS.start_date);
+  assert.equal(result.params.end_date, LONG_RANGE_INDEX_PARAMS.end_date);
+  assert.ok("date" in result.rows[0], "指数行数据应包含 date 字段");
 });
 
 // ────────────────────────────────────────────────────────────
