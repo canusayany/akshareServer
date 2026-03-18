@@ -16,7 +16,7 @@ def main() -> int:
     payload = json.loads(sys.stdin.read() or "{}")
     interface_name = payload["interface"]
     params = payload.get("params", {})
-    max_bytes = int(payload.get("max_bytes", os.environ.get("AKSHARE_NODE_MAX_BYTES", "2000")))
+    max_bytes = int(payload.get("max_bytes", os.environ.get("AKSHARE_NODE_MAX_BYTES", "5000")))
     db_path = payload.get("db_path") or os.environ.get("AKSHARE_NODE_DB_PATH") or str(
         Path.cwd() / "data" / "akshare_cache.sqlite"
     )

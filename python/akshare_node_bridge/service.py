@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +44,6 @@ SUPPORTED_INTERFACES = {
     "option_commodity_hist",
 }
 
-# 支持按日期分片、差额补齐的接口（须有 start_date、end_date 参数）
 INTERFACES_WITH_DATE_RANGE = frozenset({
     "stock_zh_a_hist",
     "stock_index_zh_hist",
@@ -52,7 +53,6 @@ INTERFACES_WITH_DATE_RANGE = frozenset({
     "stock_board_concept",
 })
 
-# 与交易日相关的接口：单日查询时，非交易日返回空数据+message
 DATE_SENSITIVE_INTERFACES = frozenset({
     "stock_zh_a_spot",
     "stock_zh_a_hist",
@@ -63,35 +63,36 @@ DATE_SENSITIVE_INTERFACES = frozenset({
 
 
 def _sort_rows_by_datetime(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按时间字段对行排序，无时间字段的排在末尾。"""
     def key_fn(row: dict[str, Any]):
         dt = extract_row_datetime(row)
         return (0, dt) if dt else (1, None)
+
     return sorted(rows, key=key_fn)
 
 
 class BridgeService:
-    def __init__(self, db_path: str | Path, max_bytes: int = 2000, test_mode: bool = False) -> None:
+    def __init__(self, db_path: str | Path, max_bytes: int = 5000, test_mode: bool = False) -> None:
         self.cache = SqliteCache(db_path)
         self.max_bytes = int(max_bytes)
         self.backend = create_backend(test_mode=test_mode)
+        raw_workers = os.environ.get("AKSHARE_BRIDGE_MAX_WORKERS", "").strip()
+        self.max_workers = max(1, int(raw_workers)) if raw_workers.isdigit() else 4
 
     def handle(self, interface_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if interface_name not in SUPPORTED_INTERFACES:
             raise ValueError(f"Unsupported interface: {interface_name}")
 
-        # LLM 防护：参数规范化与必填校验
         normalized_params = normalize_params_llm(params, interface_name)
         ok, err = validate_required(interface_name, normalized_params)
         if not ok and err:
             raise ValueError(err)
         normalized_params = self._normalize_params(normalized_params)
 
-        # 非交易日检查：单日查询时，非交易日直接返回空数据+message
         if interface_name in DATE_SENSITIVE_INTERFACES:
             check_date = None
             if interface_name in ("stock_zh_a_spot", "futures_zh_spot"):
                 from datetime import date as d
+
                 check_date = d.today()
             elif interface_name in ("stock_zh_a_hist", "stock_index_zh_hist", "futures_zh_hist"):
                 start_d = parse_datetime_like(normalized_params.get("start_date"))
@@ -113,23 +114,22 @@ class BridgeService:
                     "sampling_step": 1,
                     "rows": [],
                 }
-        # 支持日期分片的接口：优先查分片缓存，缺失部分再调接口补齐
+
         use_incremental = (
             interface_name in INTERFACES_WITH_DATE_RANGE
             and normalized_params.get("start_date")
             and normalized_params.get("end_date")
         )
-        # fund_etf_market / stock_board_* 需 mode=hist 才使用 start_date/end_date
         if use_incremental and interface_name in ("fund_etf_market", "stock_board_industry", "stock_board_concept"):
             use_incremental = normalized_params.get("mode") == "hist"
         if use_incremental:
             return self._handle_with_incremental_cache(interface_name, normalized_params)
 
-        # 其余接口：全量缓存
         request_key = self._build_request_key(interface_name, normalized_params)
         cached = self.cache.get(request_key)
         if cached is not None:
-            limited = self._limit_rows(interface_name, normalized_params, cached.payload["rows"])
+            filtered_rows = self._post_process_rows(interface_name, normalized_params, cached.payload["rows"])
+            limited = self._limit_rows(interface_name, normalized_params, filtered_rows)
             return self._success_response(interface_name, normalized_params, limited, cache_hit=True)
 
         try:
@@ -141,14 +141,14 @@ class BridgeService:
             if "returned empty" in msg.lower() or "empty" in msg.lower():
                 raise ValueError(f"数据源暂无数据: {msg}")
             raise
-        self.cache.set(interface_name, request_key, {"rows": backend_result.rows})
-        limited = self._limit_rows(interface_name, normalized_params, backend_result.rows)
+        filtered_rows = self._post_process_rows(interface_name, normalized_params, backend_result.rows)
+        self.cache.set(interface_name, request_key, {"rows": filtered_rows})
+        limited = self._limit_rows(interface_name, normalized_params, filtered_rows)
         return self._success_response(interface_name, normalized_params, limited, cache_hit=False)
 
     def _handle_with_incremental_cache(
         self, interface_name: str, normalized_params: dict[str, Any]
     ) -> dict[str, Any]:
-        """按日期分片查询缓存，缺失部分通过接口获取并写入缓存。"""
         slices = split_date_range_by_month(
             normalized_params.get("start_date"),
             normalized_params.get("end_date"),
@@ -161,7 +161,8 @@ class BridgeService:
                 if "not set" in msg.lower() or "token" in msg.lower():
                     raise ValueError(f"数据源配置缺失: {msg}")
                 raise
-            limited = self._limit_rows(interface_name, normalized_params, backend_result.rows)
+            filtered_rows = self._post_process_rows(interface_name, normalized_params, backend_result.rows)
+            limited = self._limit_rows(interface_name, normalized_params, filtered_rows)
             return self._success_response(interface_name, normalized_params, limited, cache_hit=False)
 
         all_rows: list[dict[str, Any]] = []
@@ -172,24 +173,31 @@ class BridgeService:
             slice_key = self._build_request_key(interface_name, slice_params)
             cached = self.cache.get(slice_key)
             if cached is not None:
-                all_rows.extend(cached.payload["rows"])
+                all_rows.extend(self._post_process_rows(interface_name, slice_params, cached.payload["rows"]))
             else:
                 missing_slices.append((start_str, end_str))
 
-        for start_str, end_str in missing_slices:
-            slice_params = {**normalized_params, "start_date": start_str, "end_date": end_str}
-            slice_key = self._build_request_key(interface_name, slice_params)
-            try:
-                backend_result = self.backend.fetch(interface_name, slice_params)
-            except Exception as e:
-                msg = str(e)
-                if "not set" in msg.lower() or "token" in msg.lower():
-                    raise ValueError(f"数据源配置缺失: {msg}")
-                raise
-            self.cache.set(interface_name, slice_key, {"rows": backend_result.rows})
-            all_rows.extend(backend_result.rows)
+        if missing_slices:
+            max_workers = min(self.max_workers, len(missing_slices))
+            if max_workers <= 1:
+                for start_str, end_str in missing_slices:
+                    all_rows.extend(self._fetch_and_cache_slice(interface_name, normalized_params, start_str, end_str))
+            else:
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="akshare-slice") as executor:
+                    futures = {
+                        executor.submit(
+                            self._fetch_and_cache_slice,
+                            interface_name,
+                            normalized_params,
+                            start_str,
+                            end_str,
+                        ): (start_str, end_str)
+                        for start_str, end_str in missing_slices
+                    }
+                    for future in as_completed(futures):
+                        all_rows.extend(future.result())
 
-        merged = _sort_rows_by_datetime(all_rows)
+        merged = self._post_process_rows(interface_name, normalized_params, all_rows)
         limited = self._limit_rows(interface_name, normalized_params, merged)
         cache_hit = len(missing_slices) == 0
         return self._success_response(interface_name, normalized_params, limited, cache_hit=cache_hit)
@@ -205,6 +213,75 @@ class BridgeService:
             separators=(",", ":"),
         )
         return hashlib.sha256(key_payload.encode("utf-8")).hexdigest()
+
+    def _fetch_and_cache_slice(
+        self,
+        interface_name: str,
+        normalized_params: dict[str, Any],
+        start_str: str,
+        end_str: str,
+    ) -> list[dict[str, Any]]:
+        slice_params = {**normalized_params, "start_date": start_str, "end_date": end_str}
+        slice_key = self._build_request_key(interface_name, slice_params)
+        try:
+            backend_result = self.backend.fetch(interface_name, slice_params)
+        except Exception as e:
+            msg = str(e)
+            if "not set" in msg.lower() or "token" in msg.lower():
+                raise ValueError(f"数据源配置缺失: {msg}")
+            raise
+        filtered_rows = self._post_process_rows(interface_name, slice_params, backend_result.rows)
+        self.cache.set(interface_name, slice_key, {"rows": filtered_rows})
+        return filtered_rows
+
+    def _post_process_rows(
+        self,
+        interface_name: str,
+        params: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        processed = self._filter_rows_by_date_range(interface_name, params, rows)
+        return self._dedupe_and_sort_rows(processed)
+
+    def _filter_rows_by_date_range(
+        self,
+        interface_name: str,
+        params: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if interface_name not in INTERFACES_WITH_DATE_RANGE:
+            return list(rows)
+
+        start_dt = parse_datetime_like(params.get("start_date"))
+        end_dt = parse_datetime_like(params.get("end_date"))
+        if start_dt is None and end_dt is None:
+            return list(rows)
+
+        start_bound = start_dt.date() if start_dt is not None else None
+        end_bound = end_dt.date() if end_dt is not None else None
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_dt = extract_row_datetime(row)
+            if row_dt is None:
+                continue
+            row_day = row_dt.date()
+            if start_bound is not None and row_day < start_bound:
+                continue
+            if end_bound is not None and row_day > end_bound:
+                continue
+            filtered.append(row)
+        return filtered
+
+    def _dedupe_and_sort_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            row_key = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if row_key in seen:
+                continue
+            seen.add(row_key)
+            deduped.append(row)
+        return _sort_rows_by_datetime(deduped)
 
     def _limit_rows(self, interface_name: str, params: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
         apply_cn_half_hour_filter = (

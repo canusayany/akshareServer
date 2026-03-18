@@ -942,6 +942,7 @@ class AkshareBackend:
 
     def _fetch_futures_zh_hist(self, params: dict[str, Any]) -> Any:
         symbol = params["symbol"]
+        requested_source = str(params.get("source") or "").strip().lower()
         period = params.get("period", "daily")
         if period in {"1m", "5m", "15m", "30m", "60m"}:
             return self._try_sources([("sina", lambda: self.ak.futures_zh_minute_sina(symbol=symbol, period=period))])
@@ -1029,22 +1030,28 @@ class AkshareBackend:
                 df = df.rename(columns={"vol": "volume"})
             return df
 
-        # 日线：futures_daily / Tushare / sina / em（Tushare 需 TUSHARE_TOKEN，未捐赠有限制）
-        fetchers_base = [
+        has_explicit_range = bool(s and e)
+        range_fetchers = [
             ("futures_daily", _get_futures_daily),
             ("tushare", _tushare_fut_daily),
+        ]
+        unbounded_fetchers = [
             ("sina", lambda: self.ak.futures_zh_daily_sina(symbol=symbol)),
             ("em", lambda: self.ak.futures_hist_em(symbol=symbol, period="daily")),
         ]
-        if params.get("source") == "em":
-            fetchers = [
-                ("em", lambda: self.ak.futures_hist_em(symbol=symbol, period="daily")),
-                ("futures_daily", _get_futures_daily),
-                ("tushare", _tushare_fut_daily),
-                ("sina", lambda: self.ak.futures_zh_daily_sina(symbol=symbol)),
-            ]
+
+        if requested_source == "em":
+            fetchers = [("em", lambda: self.ak.futures_hist_em(symbol=symbol, period="daily")), *range_fetchers]
+        elif requested_source == "sina":
+            fetchers = [("sina", lambda: self.ak.futures_zh_daily_sina(symbol=symbol)), *range_fetchers]
+        elif requested_source == "tushare":
+            fetchers = [("tushare", _tushare_fut_daily), ("futures_daily", _get_futures_daily)]
+        elif requested_source == "futures_daily":
+            fetchers = [("futures_daily", _get_futures_daily), ("tushare", _tushare_fut_daily)]
+        elif has_explicit_range:
+            fetchers = range_fetchers
         else:
-            fetchers = fetchers_base
+            fetchers = [*range_fetchers, *unbounded_fetchers]
         return self._try_sources(fetchers)
 
     # 主力合约静态回退（新浪 API 返回 HTML 时使用）

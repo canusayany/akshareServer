@@ -5,6 +5,7 @@ import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from .backend import _patch_ssl_if_needed
@@ -13,15 +14,27 @@ from .service import SUPPORTED_INTERFACES, BridgeService
 
 HOST = "127.0.0.1"
 PORT = 8888
+_SERVICE_CACHE: dict[tuple[int, str, bool], BridgeService] = {}
+_SERVICE_CACHE_LOCK = Lock()
+
+
+class AkshareThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
 
 
 def build_service(max_bytes: int | None = None, db_path: str | None = None) -> BridgeService:
-    resolved_max_bytes = int(max_bytes or os.environ.get("AKSHARE_NODE_MAX_BYTES", "2000"))
+    resolved_max_bytes = int(max_bytes or os.environ.get("AKSHARE_NODE_MAX_BYTES", "5000"))
     resolved_db_path = db_path or os.environ.get("AKSHARE_NODE_DB_PATH") or str(
         Path.cwd() / "data" / "akshare_cache.sqlite"
     )
     test_mode = str(os.environ.get("AKSHARE_NODE_TEST_MODE", "")).lower() in {"1", "true", "yes", "on"}
-    return BridgeService(db_path=resolved_db_path, max_bytes=resolved_max_bytes, test_mode=test_mode)
+    cache_key = (resolved_max_bytes, resolved_db_path, test_mode)
+    with _SERVICE_CACHE_LOCK:
+        service = _SERVICE_CACHE.get(cache_key)
+        if service is None:
+            service = BridgeService(db_path=resolved_db_path, max_bytes=resolved_max_bytes, test_mode=test_mode)
+            _SERVICE_CACHE[cache_key] = service
+        return service
 
 
 class AkshareRequestHandler(BaseHTTPRequestHandler):
@@ -137,7 +150,7 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     # 不在启动时 patch SSL，由请求 verify_ssl 或 backend 按 env 处理
-    httpd = ThreadingHTTPServer((HOST, PORT), AkshareRequestHandler)
+    httpd = AkshareThreadingHTTPServer((HOST, PORT), AkshareRequestHandler)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover
