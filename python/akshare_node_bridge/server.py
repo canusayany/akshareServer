@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,6 +10,7 @@ from threading import Lock
 from typing import Any
 
 from .backend import _patch_ssl_if_needed
+from .logger import get_log_path, get_logger
 from .service import SUPPORTED_INTERFACES, BridgeService
 
 
@@ -16,6 +18,7 @@ HOST = "127.0.0.1"
 PORT = 8888
 _SERVICE_CACHE: dict[tuple[int, str, bool], BridgeService] = {}
 _SERVICE_CACHE_LOCK = Lock()
+LOGGER = get_logger()
 
 
 class AkshareThreadingHTTPServer(ThreadingHTTPServer):
@@ -41,15 +44,20 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
     server_version = "AkshareNodeHTTP/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
+        started_at = time.perf_counter()
         try:
             if self.path == "/health":
                 self._write_json_safe(HTTPStatus.OK, {"ok": True, "host": HOST, "port": PORT})
+                LOGGER.info("http_get path=%s status=%s duration_ms=%.1f", self.path, HTTPStatus.OK.value, (time.perf_counter() - started_at) * 1000)
                 return
             if self.path == "/tools":
                 self._write_json_safe(HTTPStatus.OK, {"ok": True, "tools": sorted(SUPPORTED_INTERFACES)})
+                LOGGER.info("http_get path=%s status=%s duration_ms=%.1f", self.path, HTTPStatus.OK.value, (time.perf_counter() - started_at) * 1000)
                 return
             self._write_json_safe(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+            LOGGER.info("http_get path=%s status=%s duration_ms=%.1f", self.path, HTTPStatus.NOT_FOUND.value, (time.perf_counter() - started_at) * 1000)
         except Exception:
+            LOGGER.exception("http_get_error path=%s duration_ms=%.1f", self.path, (time.perf_counter() - started_at) * 1000)
             self._safe_write_error()
 
     def do_POST(self) -> None:  # noqa: N802
@@ -57,6 +65,8 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
             self._write_json_safe(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
             return
 
+        started_at = time.perf_counter()
+        interface_name = ""
         try:
             payload = self._read_json() or {}
             if not isinstance(payload, dict):
@@ -91,7 +101,21 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
             )
             result = service.handle(interface_name=interface_name, params=params)
             self._write_json_safe(HTTPStatus.OK, result)
+            LOGGER.info(
+                "http_post path=%s interface=%s status=%s duration_ms=%.1f",
+                self.path,
+                interface_name,
+                HTTPStatus.OK.value,
+                (time.perf_counter() - started_at) * 1000,
+            )
         except Exception as exc:
+            LOGGER.exception(
+                "http_post_error path=%s interface=%s duration_ms=%.1f error=%s",
+                self.path,
+                interface_name,
+                (time.perf_counter() - started_at) * 1000,
+                str(exc),
+            )
             try:
                 err_msg = str(exc)
                 self._write_json_safe(
@@ -150,12 +174,14 @@ class AkshareRequestHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     # 不在启动时 patch SSL，由请求 verify_ssl 或 backend 按 env 处理
+    LOGGER.info("server_start host=%s port=%s log_path=%s", HOST, PORT, get_log_path())
     httpd = AkshareThreadingHTTPServer((HOST, PORT), AkshareRequestHandler)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover
         pass
     finally:
+        LOGGER.info("server_stop host=%s port=%s", HOST, PORT)
         httpd.server_close()
     return 0
 

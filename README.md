@@ -226,6 +226,9 @@ npm run test:report:auto   # 自动启动服务器并测试
 
 - `AKSHARE_NODE_PYTHON_BIN`：显式指定 Python 可执行文件路径。未设置时优先使用项目 `.venv`，再回退到系统 `py`/`python3`/`python`。
 - `AKSHARE_NODE_DB_PATH`：SQLite 数据库路径，默认 `./data/akshare_cache.sqlite`。
+- `AKSHARE_NODE_LOG_DIR`：日志目录，默认 `./data/logs`。
+- `AKSHARE_NODE_LOG_FILE`：日志文件名，默认 `akshare_server.log`。
+- `AKSHARE_NODE_LOG_LEVEL`：日志级别，默认 `INFO`。
 - `AKSHARE_NODE_MAX_BYTES`：单次响应最大字节数，默认 `2000`。
 - `AKSHARE_NODE_TEST_MODE`：测试模式。开启后使用内置 stub 后端，不访问真实 `akshare`。
 - `TUSHARE_TOKEN`：可选，Tushare 备选数据源。A股/期货主源失败时回退。
@@ -244,3 +247,4 @@ npm run test:report:auto   # 自动启动服务器并测试
 - Node 客户端和测试脚本都会优先选择项目 `.venv`，缺失时再回退到系统 Python。
 - 启动脚本会在需要时自动检查并安装 `akshare`、`pandas`、`requests`、`baostock`、`certifi` 等必需依赖。
 - Linux 部署时只需要确保 `python3`、`pip` 和网络访问 `akshare` 所需数据源即可。
+- 服务会写滚动日志到 `data/logs/akshare_server.log`，单文件 `2MB`，最多保留 `10` 个文件，便于排查高 CPU 时的接口调用、耗时、缓存命中和异常。

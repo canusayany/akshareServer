@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from .backend import _compact_row_keys, create_backend
 from .cache import SqliteCache
 from .calendar import is_same_day, is_trading_day, parse_datetime_like, split_date_range_by_month
+from .logger import get_logger
 from .limiter import extract_row_datetime, reduce_rows_evenly
 from .params_guard import normalize_params as normalize_params_llm, validate_required
 
@@ -77,8 +79,10 @@ class BridgeService:
         self.backend = create_backend(test_mode=test_mode)
         raw_workers = os.environ.get("AKSHARE_BRIDGE_MAX_WORKERS", "").strip()
         self.max_workers = max(1, int(raw_workers)) if raw_workers.isdigit() else 4
+        self.logger = get_logger()
 
     def handle(self, interface_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        started_at = time.perf_counter()
         if interface_name not in SUPPORTED_INTERFACES:
             raise ValueError(f"Unsupported interface: {interface_name}")
 
@@ -130,11 +134,14 @@ class BridgeService:
         if cached is not None:
             filtered_rows = self._post_process_rows(interface_name, normalized_params, cached.payload["rows"])
             limited = self._limit_rows(interface_name, normalized_params, filtered_rows)
-            return self._success_response(interface_name, normalized_params, limited, cache_hit=True)
+            response = self._success_response(interface_name, normalized_params, limited, cache_hit=True)
+            self._log_request(interface_name, normalized_params, response, started_at)
+            return response
 
         try:
             backend_result = self.backend.fetch(interface_name, normalized_params)
         except Exception as e:
+            self._log_failure(interface_name, normalized_params, started_at, e)
             msg = str(e)
             if "not set" in msg.lower() or "token" in msg.lower():
                 raise ValueError(f"数据源配置缺失: {msg}")
@@ -144,7 +151,9 @@ class BridgeService:
         filtered_rows = self._post_process_rows(interface_name, normalized_params, backend_result.rows)
         self.cache.set(interface_name, request_key, {"rows": filtered_rows})
         limited = self._limit_rows(interface_name, normalized_params, filtered_rows)
-        return self._success_response(interface_name, normalized_params, limited, cache_hit=False)
+        response = self._success_response(interface_name, normalized_params, limited, cache_hit=False)
+        self._log_request(interface_name, normalized_params, response, started_at)
+        return response
 
     def _handle_with_incremental_cache(
         self, interface_name: str, normalized_params: dict[str, Any]
@@ -178,6 +187,13 @@ class BridgeService:
                 missing_slices.append((start_str, end_str))
 
         if missing_slices:
+            self.logger.info(
+                "incremental_fetch interface=%s missing_slices=%s max_workers=%s params=%s",
+                interface_name,
+                len(missing_slices),
+                min(self.max_workers, len(missing_slices)),
+                self._compact_json(normalized_params),
+            )
             max_workers = min(self.max_workers, len(missing_slices))
             if max_workers <= 1:
                 for start_str, end_str in missing_slices:
@@ -221,17 +237,35 @@ class BridgeService:
         start_str: str,
         end_str: str,
     ) -> list[dict[str, Any]]:
+        started_at = time.perf_counter()
         slice_params = {**normalized_params, "start_date": start_str, "end_date": end_str}
         slice_key = self._build_request_key(interface_name, slice_params)
         try:
             backend_result = self.backend.fetch(interface_name, slice_params)
         except Exception as e:
+            self.logger.exception(
+                "slice_error interface=%s start=%s end=%s duration_ms=%.1f params=%s error=%s",
+                interface_name,
+                start_str,
+                end_str,
+                (time.perf_counter() - started_at) * 1000,
+                self._compact_json(slice_params),
+                str(e),
+            )
             msg = str(e)
             if "not set" in msg.lower() or "token" in msg.lower():
                 raise ValueError(f"数据源配置缺失: {msg}")
             raise
         filtered_rows = self._post_process_rows(interface_name, slice_params, backend_result.rows)
         self.cache.set(interface_name, slice_key, {"rows": filtered_rows})
+        self.logger.info(
+            "slice_ok interface=%s start=%s end=%s duration_ms=%.1f rows=%s",
+            interface_name,
+            start_str,
+            end_str,
+            (time.perf_counter() - started_at) * 1000,
+            len(filtered_rows),
+        )
         return filtered_rows
 
     def _post_process_rows(
@@ -312,3 +346,39 @@ class BridgeService:
             "sampling_step": limited["sampling_step"],
             "rows": rows,
         }
+
+    def _log_request(
+        self,
+        interface_name: str,
+        params: dict[str, Any],
+        response: dict[str, Any],
+        started_at: float,
+    ) -> None:
+        self.logger.info(
+            "request_ok interface=%s duration_ms=%.1f cache_hit=%s requested_rows=%s returned_rows=%s sampling_step=%s params=%s",
+            interface_name,
+            (time.perf_counter() - started_at) * 1000,
+            response.get("cache_hit"),
+            response.get("requested_rows"),
+            response.get("returned_rows"),
+            response.get("sampling_step"),
+            self._compact_json(params),
+        )
+
+    def _log_failure(
+        self,
+        interface_name: str,
+        params: dict[str, Any],
+        started_at: float,
+        error: Exception,
+    ) -> None:
+        self.logger.exception(
+            "request_error interface=%s duration_ms=%.1f params=%s error=%s",
+            interface_name,
+            (time.perf_counter() - started_at) * 1000,
+            self._compact_json(params),
+            str(error),
+        )
+
+    def _compact_json(self, value: dict[str, Any]) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
