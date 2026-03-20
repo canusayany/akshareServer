@@ -14,6 +14,7 @@ from .calendar import is_same_day, is_trading_day, parse_datetime_like, split_da
 from .logger import get_logger
 from .limiter import extract_row_datetime, reduce_rows_evenly
 from .params_guard import normalize_params as normalize_params_llm, validate_required
+from .tqsdk_source import TqSdkDataSource
 
 
 SUPPORTED_INTERFACES = {
@@ -44,6 +45,12 @@ SUPPORTED_INTERFACES = {
     "option_current_em",
     "option_sse_daily_sina",
     "option_commodity_hist",
+    # TqSdk 期货期权接口（优先级最高）
+    "futures_quote_tqsdk",
+    "futures_kline_tqsdk",
+    "futures_ticks_tqsdk",
+    "option_quote_tqsdk",
+    "symbol_info_tqsdk",
 }
 
 INTERFACES_WITH_DATE_RANGE = frozenset({
@@ -77,6 +84,7 @@ class BridgeService:
         self.cache = SqliteCache(db_path)
         self.max_bytes = int(max_bytes)
         self.backend = create_backend(test_mode=test_mode)
+        self.tqsdk_source = TqSdkDataSource()
         raw_workers = os.environ.get("AKSHARE_BRIDGE_MAX_WORKERS", "").strip()
         self.max_workers = max(1, int(raw_workers)) if raw_workers.isdigit() else 4
         self.logger = get_logger()
@@ -85,6 +93,10 @@ class BridgeService:
         started_at = time.perf_counter()
         if interface_name not in SUPPORTED_INTERFACES:
             raise ValueError(f"Unsupported interface: {interface_name}")
+
+        # 优先处理 TqSdk 接口
+        if interface_name.endswith("_tqsdk"):
+            return self._handle_tqsdk_interface(interface_name, params or {}, started_at)
 
         normalized_params = normalize_params_llm(params, interface_name)
         ok, err = validate_required(interface_name, normalized_params)
@@ -154,6 +166,81 @@ class BridgeService:
         response = self._success_response(interface_name, normalized_params, limited, cache_hit=False)
         self._log_request(interface_name, normalized_params, response, started_at)
         return response
+
+    def _handle_tqsdk_interface(
+        self, interface_name: str, params: dict[str, Any], started_at: float
+    ) -> dict[str, Any]:
+        """处理 TqSdk 期货期权接口。"""
+        try:
+            rows: list[dict[str, Any]] = []
+
+            if interface_name == "futures_quote_tqsdk":
+                symbol = params.get("symbol")
+                if not symbol:
+                    raise ValueError("缺少必填参数: symbol")
+                timeout = float(params.get("timeout", 10.0))
+                quote = self.tqsdk_source.fetch_futures_spot(symbol, timeout)
+                if quote:
+                    rows = [quote]
+
+            elif interface_name == "futures_kline_tqsdk":
+                symbol = params.get("symbol")
+                if not symbol:
+                    raise ValueError("缺少必填参数: symbol")
+                duration = int(params.get("duration", 60))
+                data_length = int(params.get("data_length", 100))
+                timeout = float(params.get("timeout", 10.0))
+                klines = self.tqsdk_source.fetch_futures_klines(symbol, duration, data_length, timeout)
+                if klines:
+                    rows = klines
+
+            elif interface_name == "futures_ticks_tqsdk":
+                symbol = params.get("symbol")
+                if not symbol:
+                    raise ValueError("缺少必填参数: symbol")
+                data_length = int(params.get("data_length", 100))
+                timeout = float(params.get("timeout", 10.0))
+                ticks = self.tqsdk_source.fetch_futures_ticks(symbol, data_length, timeout)
+                if ticks:
+                    rows = ticks
+
+            elif interface_name == "option_quote_tqsdk":
+                symbol = params.get("symbol")
+                if not symbol:
+                    raise ValueError("缺少必填参数: symbol")
+                timeout = float(params.get("timeout", 10.0))
+                quote = self.tqsdk_source.fetch_futures_spot(symbol, timeout)
+                if quote:
+                    rows = [quote]
+
+            elif interface_name == "symbol_info_tqsdk":
+                ins_class = params.get("ins_class")
+                timeout = float(params.get("timeout", 10.0))
+                symbols = self.tqsdk_source.query_symbols(ins_class, timeout)
+                if symbols:
+                    rows = symbols
+
+            limited = self._limit_rows(interface_name, params, rows)
+            response = {
+                "ok": True,
+                "interface": interface_name,
+                "params": params,
+                "cache_hit": False,
+                "estimated_row_bytes": limited["estimated_row_bytes"],
+                "max_rows": limited["max_rows"],
+                "requested_rows": limited["requested_rows"],
+                "returned_rows": limited["returned_rows"],
+                "sampling_step": limited["sampling_step"],
+                "rows": limited["rows"],
+            }
+            self._log_request(interface_name, params, response, started_at)
+            return response
+
+        except Exception as e:
+            self._log_failure(interface_name, params, started_at, e)
+            if "缺少必填参数" in str(e):
+                raise ValueError(str(e))
+            raise ValueError(f"TqSdk 接口调用失败: {str(e)}")
 
     def _handle_with_incremental_cache(
         self, interface_name: str, normalized_params: dict[str, Any]
