@@ -605,23 +605,172 @@ portfolio_vol               = std(Σ(w_i * ret_i_t)) * sqrt(252)
 
 ---
 
-## 9. 开发检查清单
+## 4. 期货期权数据能力（新增）
+
+### 4.1 数据源优先级
+
+期货期权数据优先从以下来源获取，按优先级排序：
+
+1. **TqSdk（天勤 SDK）** - 优先级最高 ✓ 实时行情、K线、Tick
+2. **AkShare** - 备选源
+3. 其他信息源
+
+### 4.2 环境配置
+
+在 `.env` 文件中配置 TqSdk 凭证：
+
+```bash
+# 天勤 SDK 期货期权数据源
+# 需要快期账户，可从 https://www.shinnytech.com/tqsdk 获取
+TQSDK_USERNAME=your_tqsdk_username
+TQSDK_PASSWORD=your_tqsdk_password
+```
+
+### 4.3 新增接口：期货期权数据
+
+为支持期货期权数据，新增以下接口：
+
+| 接口名 | 功能 | 参数 | 返回数据 |
+|--------|------|------|---------|
+| `futures_quote_tqsdk` | 期货实时行情 | `symbol`: 合约代码（如 `SHFE.au`、`KQ.m@SHFE.au`）; `timeout`: 超时秒数(默认 10) | 最新报价、买卖价、持仓量等 |
+| `futures_kline_tqsdk` | 期货 K 线 | `symbol`: 合约代码; `duration`: 周期(秒, 默认 60); `data_length`: 条数(默认 100,最多 10000); `timeout`: 超时秒数 | OHLCV 数据序列 |
+| `futures_ticks_tqsdk` | 期货 Tick 数据 | `symbol`: 合约代码; `data_length`: 条数(默认 100,最多 10000); `timeout`: 超时秒数 | 逐笔成交数据 |
+| `option_quote_tqsdk` | 期权实时行情 | `symbol`: 合约代码; `timeout`: 超时秒数 | 期权行情（Greeks 等） |
+| `symbol_info_tqsdk` | 合约信息查询 | `ins_class`: 合约类型(可选，如 'FUTURE'、'OPTION'); `timeout`: 超时秒数 | 所有可交易合约的详细信息 |
+
+### 4.4 API 调用示例
+
+**示例 1：获取黄金期货实时行情**
+```json
+POST /invoke HTTP/1.1
+Content-Type: application/json
+
+{
+  "interface": "futures_quote_tqsdk",
+  "params": {
+    "symbol": "SHFE.au",
+    "timeout": 10
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "ok": true,
+  "interface": "futures_quote_tqsdk",
+  "params": {"symbol": "SHFE.au", "timeout": 10},
+  "cache_hit": false,
+  "rows": [
+    {
+      "datetime": "20260320150000000",
+      "last_price": 438.95,
+      "ask_price1": 438.96,
+      "bid_price1": 438.94,
+      "bid_volume1": 100,
+      "ask_volume1": 50,
+      "volume": 1250000,
+      "open_interest": 450000,
+      "high": 440.20,
+      "low": 437.50,
+      "open": 438.10,
+      "price_tick": 0.01,
+      "volume_multiple": 10,
+      "instrument_name": "黄金",
+      "ins_class": "FUTURE",
+      "expired": false
+    }
+  ]
+}
+```
+
+**示例 2：获取沪深 300 期货 1 分钟 K 线**
+```json
+POST /invoke HTTP/1.1
+Content-Type: application/json
+
+{
+  "interface": "futures_kline_tqsdk",
+  "params": {
+    "symbol": "DCE.i2505",
+    "duration": 60,
+    "data_length": 20,
+    "timeout": 15
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "ok": true,
+  "interface": "futures_kline_tqsdk",
+  "rows": [
+    {
+      "datetime": 1711007460,
+      "open": 3685.5,
+      "high": 3692.0,
+      "low": 3684.0,
+      "close": 3690.5,
+      "volume": 125000,
+      "open_oi": 385000,
+      "close_oi": 392000
+    },
+    {...}
+  ]
+}
+```
+
+### 4.5 合约代码规范
+
+TqSdk 使用交易所统一的合约代码格式：
+
+| 交易所 | 代码前缀 | 示例 |
+|--------|----------|------|
+| 上期所 (SHFE) | `SHFE.` | `SHFE.au`（黄金）、`SHFE.rb2505`（螺纹钢 2505 月） |
+| 大商所 (DCE) | `DCE.` | `DCE.i2505`（铁矿石 2505 月） |
+| 郑商所 (CZCE) | `CZCE.` | `CZCE.CF2505`（棉花 2505 月） |
+| 中金所 (CFFEX) | `CFFEX.` | `CFFEX.IF2503`（沪深 300 指数期货 2503 月） |
+| 上交所期权 (SSE) | KQ.m@SHFE.au 等 | `KQ.m@SHFE.au`（黄金看跌期权） |
+
+### 4.6 数据获取优先级流程
+
+```
+用户查询期货期权数据
+  ↓
+优先尝试 TqSdk (时间敏感性高)
+  ├─ 如果成功 → 返回实时数据 ✓
+  ├─ 如果失败或超时 → 降级到 AkShare
+  │  ├─ 如果成功 → 返回准实时数据
+  │  └─ 如果失败 → 错误提示
+  └─ 如果未配置凭证
+     └─ 直接使用 AkShare 作为备选
+```
+
+---
+
+## 5. 开发检查清单
 
 - [ ] Phase 1 接口完成
   - [ ] `resolve_portfolio_positions` 核心逻辑
   - [ ] `get_asset_snapshots` 数据聚合
   - [ ] `get_portfolio_profile` 风险计算
+- [ ] 期货期权 TqSdk 集成
+  - [x] TqSdk 数据源模块创建 ✓
+  - [x] 接口服务集成 ✓
+  - [x] 环境配置更新 ✓
+  - [x] 依赖包更新 ✓
 - [ ] 数据质量字段集成
 - [ ] 数据不做切片，完整返回
 - [ ] 所有时间字段统一为 RFC3339
 - [ ] 旧接口保留为内部调用
 - [ ] 测试覆盖率 > 80%
 - [ ] API 文档更新
-- [ ] LLM 提示词更新（只暴露新 5 个接口）
+- [ ] LLM 提示词更新（暴露新接口 + TqSdk 期货期权接口）
 
 ---
 
-## 10. 附录：完整示例
+## 6. 附录：完整示例
 
 ### LLM 决策场景
 
@@ -651,6 +800,17 @@ LLM 调用 3: get_targeted_event_context [300750.SZ]
     ↓ 获得：相关事件摘要
     
 LLM 输出：综合分析
+```
+
+**场景 3：查询黄金期货走势**
+```
+LLM 调用 1: futures_quote_tqsdk [SHFE.au]
+    ↓ 获得：实时行情：最新价、买卖价差、成交量
+    
+LLM 调用 2: futures_kline_tqsdk [SHFE.au, duration=3600, data_length=24]
+    ↓ 获得：近 24 小时每小时 K 线，判断趋势
+    
+LLM 输出：黄金行情分析和交易建议
 ```
 
 ---
